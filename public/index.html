@@ -107,6 +107,15 @@ function convertPrice(amount, fromCurrency, toCurrency, rates) {
   return (amount / from) * to;
 }
 
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`요청 시간 초과 (${ms/1000}초) — 네트워크를 확인하세요`)), ms)
+    )
+  ]);
+}
+
 // ─── 이미지 리사이즈 유틸 ─────────────────────────────────────────
 async function resizeImageToBlob(file, targetBytes = 500 * 1024) {
   return new Promise((resolve, reject) => {
@@ -825,27 +834,59 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
     {type:"empty",value:null,preview:null},{type:"empty",value:null,preview:null}
   ]);
   const [submitting, setSubmitting] = useState(false);
+  const [progress, setProgress]     = useState({ pct: 0, label: "" });
+  const [errorMsg, setErrorMsg]     = useState(null);
   const set = (k,v) => setForm(f => ({...f,[k]:v}));
 
   const submit = async () => {
     if (!form.title.trim() || submitting) return;
     setSubmitting(true);
+    setErrorMsg(null);
+
+    const fileSlots  = photoSlots.filter(s => s.type === "file");
+    const totalSteps = fileSlots.length > 0 ? 3 : 2;
+    let step = 0;
+    const bump = (pct, label) => { step++; setProgress({ pct, label }); };
+
     try {
-      const newRef = db.collection("items").doc();
-      const photoUrls = await uploadPhotos(newRef.id, photoSlots);
-      await newRef.set({
+      const newRef    = db.collection("items").doc();
+      let photoUrls   = [];
+
+      if (fileSlots.length > 0) {
+        let done = 0;
+        for (let i = 0; i < photoSlots.length; i++) {
+          const slot = photoSlots[i];
+          if (slot.type === "url")   { photoUrls.push(slot.value); continue; }
+          if (slot.type !== "file")  { continue; }
+          const n = fileSlots.length;
+          bump(Math.round(10 + (done / n) * 30), `사진 압축 중... (${done+1}/${n})`);
+          const blob = await resizeImageToBlob(slot.value);
+          bump(Math.round(40 + (done / n) * 35), `사진 업로드 중... (${done+1}/${n})`);
+          const ref  = storage.ref(`items/${newRef.id}/photo_${i}_${Date.now()}.jpg`);
+          const snap = await withTimeout(ref.put(blob, { contentType:"image/jpeg" }), 30000);
+          photoUrls.push(await snap.ref.getDownloadURL());
+          done++;
+        }
+      }
+
+      bump(80, "정보 저장 중...");
+      await withTimeout(newRef.set({
         ...form,
-        price:  Number(form.price)||0,
-        year:   Number(form.year)||new Date().getFullYear(),
+        price:  Number(form.price) || 0,
+        year:   Number(form.year)  || new Date().getFullYear(),
         photos: photoUrls,
         leads:  [],
         checklist: { upload:false, contact:false, negotiate:false, prepare:false },
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      onAdd();
+      }), 15000);
+
+      setProgress({ pct: 100, label: "등록 완료! ✅" });
+      setTimeout(onAdd, 700);
     } catch(e) {
-      console.error(e);
+      console.error("submit error:", e);
+      setErrorMsg(e.message || "등록 중 오류가 발생했습니다. 다시 시도해주세요.");
+      setProgress({ pct: 0, label: "" });
       setSubmitting(false);
     }
   };
@@ -950,9 +991,45 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
           <label style={lStyle}>메모</label>
           <textarea value={form.memo} onChange={e => set("memo",e.target.value)} style={{...iStyle,height:72,resize:"none"}} placeholder="기타 참고사항..." />
         </Card>
-        <button onClick={submit} disabled={submitting} style={{ background:form.title.trim()&&!submitting?"#c0392b":"#ddd", color:"#fff", border:"none", borderRadius:14, padding:"15px", fontSize:15, fontWeight:800, cursor:form.title.trim()&&!submitting?"pointer":"default", transition:"background 0.2s", letterSpacing:-0.2 }}>
-          {submitting ? "등록 중..." : "등록 완료"}
-        </button>
+        {errorMsg && (
+          <div style={{ background:"#fff5f5", border:"1.5px solid #fca5a5", borderRadius:12, padding:"12px 14px", fontSize:13, color:"#ef4444", fontWeight:600, textAlign:"center", lineHeight:1.6 }}>
+            ⚠️ {errorMsg}
+          </div>
+        )}
+
+        {submitting ? (
+          <div style={{ background:"#fff", borderRadius:14, padding:"18px 16px", border:"1px solid #ede8e1" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <span style={{ fontSize:14, fontWeight:700, color:"#1a1a1a" }}>{progress.label || "처리 중..."}</span>
+              <span style={{ fontSize:14, fontWeight:800, color: progress.pct === 100 ? "#22c55e" : "#c0392b" }}>{progress.pct}%</span>
+            </div>
+            <div style={{ background:"#f0ece6", borderRadius:99, height:10, overflow:"hidden" }}>
+              <div style={{ width:`${progress.pct}%`, height:"100%", borderRadius:99, transition:"width 0.4s ease",
+                background: progress.pct === 100 ? "#22c55e" : "linear-gradient(90deg,#c0392b,#e74c3c)" }} />
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:14 }}>
+              {[
+                { label:"사진 처리", done: progress.pct >= 40 },
+                { label:"사진 업로드", done: progress.pct >= 75 },
+                { label:"저장 완료", done: progress.pct >= 100 },
+              ].map((s,i) => (
+                <div key={i} style={{ flex:1, textAlign:"center" }}>
+                  <div style={{ width:24, height:24, borderRadius:99, margin:"0 auto 4px", display:"flex", alignItems:"center", justifyContent:"center",
+                    background: s.done ? "#22c55e" : "#f0ece6", border:`2px solid ${s.done?"#22c55e":"#d1c9bc"}`, transition:"all 0.3s" }}>
+                    {s.done
+                      ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>
+                      : <div style={{ width:8, height:8, borderRadius:99, background:"#d1c9bc" }} />}
+                  </div>
+                  <div style={{ fontSize:9, color: s.done ? "#22c55e" : "#bbb", fontWeight:700 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <button onClick={submit} style={{ background:form.title.trim()?"#c0392b":"#ddd", color:"#fff", border:"none", borderRadius:14, padding:"15px", fontSize:15, fontWeight:800, cursor:form.title.trim()?"pointer":"default", transition:"background 0.2s", letterSpacing:-0.2 }}>
+            등록 완료
+          </button>
+        )}
       </div>
     </div>
   );

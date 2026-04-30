@@ -78,7 +78,7 @@ const formatPrice = (amount, currency) => {
 };
 
 // ─── 기본 카테고리·위치 ─────────────────────────────────────────
-const DEFAULT_CATEGORIES = ["가구","가전","의류","스포츠","도서","주방","기타"];
+const DEFAULT_CATEGORIES = ["가구","가전","의류","스포츠","도서","주방용품","기타"];
 const DEFAULT_LOCATIONS  = ["거실","안방","작은방","주방","창고","베란다","서재"];
 const STATUS_OPTIONS     = ["새것","양호","수리필요"];
 const PRIORITY_OPTIONS   = ["높음","보통","낮음"];
@@ -186,8 +186,8 @@ const lStyle   = { fontSize:11, fontWeight:700, color:"#aaa", display:"block", m
 function Tag({ color, label }) {
   return <span style={{ fontSize:10, fontWeight:600, color, background:color+"18", padding:"2px 6px", borderRadius:6 }}>{label}</span>;
 }
-function Card({ children, style }) {
-  return <div style={{ background:"#fff", borderRadius:14, padding:"14px", border:"1px solid #ede8e1", ...style }}>{children}</div>;
+function Card({ children, style, onClick }) {
+  return <div onClick={onClick} style={{ background:"#fff", borderRadius:14, padding:"14px", border:"1px solid #ede8e1", ...style }}>{children}</div>;
 }
 function SectionLabel({ children }) {
   return <div style={{ fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase", letterSpacing:0.6, marginBottom:10 }}>{children}</div>;
@@ -718,6 +718,8 @@ function LeadsTab({ item, upd, currency }) {
 function SellingTab({ item, upd, updCl, currency }) {
   const [copied, setCopied] = useState(false);
   const [lang, setLang] = useState("ko");
+  const [copiedAi, setCopiedAi] = useState(false);
+  const [aiLang, setAiLang] = useState("ko");
   const cl = item.checklist || {};
   const checks = [
     { key:"upload",    label:"중고장터 업로드" },
@@ -760,6 +762,48 @@ function SellingTab({ item, upd, updCl, currency }) {
     else { const ta=document.createElement("textarea"); ta.value=lines; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); }
   };
 
+  const v = k => (k || "");
+  const aiJsonKo = JSON.stringify({
+    system_instruction: "당신은 중고 물품 가격 감정 AI입니다. 제공된 중고 물품의 정보를 바탕으로 현재 한국(South Korea) 시장에서의 적정 중고 거래 가격을 추산하십시오. 입력된 필드값이 한국어가 아닐 경우, 한국어로 먼저 번역한 후 시장 가격을 검색 및 평가하십시오. 입력값 중 값이 없는 필드가 존재할 수 있으며, 제공된 정보만을 바탕으로 객관적이고 보수적으로 평가해야 합니다. 결과는 반드시 지정된 출력 형식에 맞춰 반환하십시오.",
+    user_input: {
+      "물품명": v(item.title),
+      "카테고리": v(item.category),
+      "브랜드": v(item.brand),
+      "구매연도": item.year ? String(item.year) : "",
+      "크기": v(item.dimensions),
+      "무게": v(item.weight),
+      "상태": statusKo,
+      "상태 메모": v(item.condition)
+    },
+    expected_output_format: {
+      "AI_추산_시장_가격": "예상 가격 범위 또는 특정 금액 (예: 50,000원 ~ 60,000원)",
+      "산정_근거": "해당 가격을 추산한 간략한 논리적 이유 및 데이터 부족 시 이에 대한 안내"
+    }
+  }, null, 2);
+  const aiJsonEn = JSON.stringify({
+    system_instruction: "You are an AI specialized in appraising the market value of used goods. Analyze the provided item information to estimate a fair market price for secondhand trading specifically in the South Africa market using South African Rand (ZAR). If any of the input field values are not in English, translate them into English before conducting your search and valuation. Some input fields may be empty; you must base your objective and conservative valuation strictly on the provided data. Return the result strictly in the specified output format.",
+    user_input: {
+      "item_name": v(item.title),
+      "category": v(item.category),
+      "brand": v(item.brand),
+      "purchase_year": item.year ? String(item.year) : "",
+      "size": v(item.dimensions),
+      "weight": v(item.weight),
+      "condition": statusEn,
+      "condition_memo": v(item.condition)
+    },
+    expected_output_format: {
+      "AI_Estimated_Market_Price": "Estimated price range or specific amount (e.g., R500 - R600)",
+      "Valuation_Basis": "Brief logical reasoning for the estimated price, including a note if insufficient data affected the valuation"
+    }
+  }, null, 2);
+  const aiLines = aiLang === "ko" ? aiJsonKo : aiJsonEn;
+  const handleCopyAi = () => {
+    const done = () => { setCopiedAi(true); setTimeout(()=>setCopiedAi(false),2000); };
+    if (navigator.clipboard) { navigator.clipboard.writeText(aiLines).then(done); }
+    else { const ta=document.createElement("textarea"); ta.value=aiLines; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); }
+  };
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <Card>
@@ -793,6 +837,23 @@ function SellingTab({ item, upd, updCl, currency }) {
         </button>
       </Card>
       <div style={{ fontSize:11, color:"#bbb", textAlign:"center", lineHeight:1.7 }}>카카오톡, WhatsApp 등<br/>메신저에 그대로 붙여넣기 하세요.</div>
+      <Card>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <SectionLabel>AI 중고 시장 가격 문의 문구</SectionLabel>
+          <div style={{ display:"flex", gap:0, border:"1.5px solid #e2ddd7", borderRadius:10, overflow:"hidden" }}>
+            {[["ko","한국"],["en","South Africa"]].map(([code,label]) => (
+              <button key={code} onClick={() => setAiLang(code)} style={{ padding:"5px 10px", border:"none", fontSize:11, fontWeight:700, cursor:"pointer", background:aiLang===code?"#c0392b":"#fff", color:aiLang===code?"#fff":"#aaa", transition:"all 0.15s" }}>{label}</button>
+            ))}
+          </div>
+        </div>
+        <pre style={{ whiteSpace:"pre-wrap", wordBreak:"break-word", fontSize:11, lineHeight:1.7, color:"#555", background:"#faf8f5", borderRadius:10, padding:"12px", border:"1px solid #ede8e1", fontFamily:"inherit", marginBottom:12, maxHeight:260, overflowY:"auto" }}>{aiLines}</pre>
+        <button onClick={handleCopyAi} style={{ width:"100%", background:copiedAi?"#22c55e":"#6b7280", color:"#fff", border:"none", borderRadius:10, padding:"11px", fontSize:13, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, transition:"background 0.2s" }}>
+          {copiedAi
+            ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>복사 완료!</>
+            : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>AI 문의 문구 복사</>}
+        </button>
+        <div style={{ fontSize:10, color:"#ccc", textAlign:"center", marginTop:8, lineHeight:1.6 }}>Claude, ChatGPT 등 AI에게 붙여넣어 중고 시장가를 문의하세요.</div>
+      </Card>
     </div>
   );
 }
@@ -1201,7 +1262,7 @@ function App({ user }) {
       {!selected && tab !== "add" && (
         <div style={{ textAlign:"center", padding:"10px 16px 14px", borderTop:"1px solid #ede8e1", background:"#faf8f5" }}>
           <div style={{ fontSize:10, color:"#ccc", fontWeight:500, lineHeight:1.8 }}>
-            Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>Version 1.0.0
+            Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>Version 1.0.2
           </div>
         </div>
       )}

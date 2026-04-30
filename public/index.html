@@ -304,11 +304,7 @@ function LoginScreen({ onGoogleLogin, onAppleLogin, error, loading }) {
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:32, background:"#faf8f5" }}>
       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
-        <div style={{ width:48, height:48, background:"#c0392b", borderRadius:14, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2">
-            <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/>
-          </svg>
-        </div>
+        <img src="/icon-192.png" style={{ width:48, height:48, borderRadius:14 }} alt="logo" />
         <div>
           <div style={{ fontSize:24, fontWeight:800, color:"#1a1a1a", letterSpacing:-0.5 }}>Sell2ndHand</div>
           <div style={{ fontSize:12, color:"#aaa", fontWeight:500 }}>중고물품 판매 관리</div>
@@ -600,6 +596,11 @@ function InfoTab({ item, onSave, onDelete, onBack, categories, locations, curren
             {categories.map(c => <option key={c}>{c}</option>)}
           </select>
         </Row>
+        <Row label="위치">
+          <select value={draft.location} onChange={e => set("location",e.target.value)} style={{...selStyle,width:"auto"}}>
+            {locations.map(l => <option key={l}>{l}</option>)}
+          </select>
+        </Row>
         <Row label="상태">
           <div style={{ display:"flex", gap:5 }}>
             {STATUS_OPTIONS.map(s => (
@@ -607,15 +608,10 @@ function InfoTab({ item, onSave, onDelete, onBack, categories, locations, curren
             ))}
           </div>
         </Row>
-        <Row label="위치">
-          <select value={draft.location} onChange={e => set("location",e.target.value)} style={{...selStyle,width:"auto"}}>
-            {locations.map(l => <option key={l}>{l}</option>)}
-          </select>
-        </Row>
-        <Row label="보관 상태">
+        <Row label="판매 우선순위">
           <div style={{ display:"flex", gap:5 }}>
-            {STORED_OPTIONS.map(s => (
-              <button key={s} onClick={() => set("stored",s)} style={{ padding:"4px 8px", borderRadius:20, border:"1.5px solid", borderColor:storedVal(draft.stored)===s?storedColor(s):"#e2ddd7", background:storedVal(draft.stored)===s?storedColor(s)+"18":"#fff", color:storedVal(draft.stored)===s?storedColor(s):"#999", fontSize:11, fontWeight:700, cursor:"pointer" }}>{s}</button>
+            {PRIORITY_OPTIONS.map(p => (
+              <button key={p} onClick={() => set("sellPriority",p)} style={{ padding:"4px 8px", borderRadius:20, border:"1.5px solid", borderColor:draft.sellPriority===p?priorityColor(p):"#e2ddd7", background:draft.sellPriority===p?priorityColor(p)+"18":"#fff", color:draft.sellPriority===p?priorityColor(p):"#999", fontSize:11, fontWeight:700, cursor:"pointer" }}>{p}</button>
             ))}
           </div>
         </Row>
@@ -648,16 +644,16 @@ function InfoTab({ item, onSave, onDelete, onBack, categories, locations, curren
         </Row>
       </Card>
       <Card>
-        <SectionLabel>판매 우선순위</SectionLabel>
-        <div style={{ display:"flex", gap:8 }}>
-          {PRIORITY_OPTIONS.map(p => (
-            <button key={p} onClick={() => set("sellPriority",p)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:draft.sellPriority===p?priorityColor(p):"#e2ddd7", background:draft.sellPriority===p?priorityColor(p)+"15":"#fff", color:draft.sellPriority===p?priorityColor(p):"#bbb", fontSize:13, fontWeight:700, cursor:"pointer" }}>{p}</button>
-          ))}
-        </div>
-      </Card>
-      <Card>
         <SectionLabel>메모</SectionLabel>
         <textarea value={draft.memo||""} onChange={e => set("memo",e.target.value)} style={{...iStyle,height:72,resize:"none"}} placeholder="기타 참고사항..." />
+      </Card>
+      <Card>
+        <SectionLabel>현재 상태</SectionLabel>
+        <div style={{ display:"flex", gap:8 }}>
+          {STORED_OPTIONS.map(s => (
+            <button key={s} onClick={() => set("stored",s)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:storedVal(draft.stored)===s?storedColor(s):"#e2ddd7", background:storedVal(draft.stored)===s?storedColor(s)+"15":"#fff", color:storedVal(draft.stored)===s?storedColor(s):"#bbb", fontSize:13, fontWeight:700, cursor:"pointer" }}>{s}</button>
+          ))}
+        </div>
       </Card>
       {errorMsg && (
         <div style={{ background:"#fff5f5", border:"1.5px solid #fca5a5", borderRadius:12, padding:"12px 14px", fontSize:13, color:"#ef4444", fontWeight:600, textAlign:"center", lineHeight:1.6 }}>⚠️ {errorMsg}</div>
@@ -985,7 +981,10 @@ function ChecklistScreen({ items, currency }) {
                         <div style={{ fontSize:13, fontWeight:700, color:"#1a1a1a", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
                         <div style={{ fontSize:11, color:"#aaa" }}>{item.location} · {formatPrice(item.price,item.currency||currency)}</div>
                       </div>
-                      <span style={{ fontSize:12, fontWeight:800, color:pct===100?"#22c55e":"#c0392b" }}>{pct}%</span>
+                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+                        <span style={{ fontSize:12, fontWeight:800, color:pct===100?"#22c55e":"#c0392b" }}>{pct}%</span>
+                        <span style={{ fontSize:10, fontWeight:700, color:storedColor(storedVal(item.stored)) }}>{storedIcon(storedVal(item.stored))} {storedVal(item.stored)}</span>
+                      </div>
                     </div>
                     <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
                       {CHECKS.map(c => {
@@ -1114,14 +1113,6 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
               <AddCustomInput placeholder="카테고리 직접 추가..." onAdd={name => { onAddCategory(name); set("category",name); }} />
             </div>
             <div>
-              <label style={lStyle}>상태</label>
-              <div style={{ display:"flex", gap:6 }}>
-                {STATUS_OPTIONS.map(s => (
-                  <button key={s} onClick={() => set("status",s)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:form.status===s?statusColor(s):"#e2ddd7", background:form.status===s?statusColor(s)+"18":"#fff", color:form.status===s?statusColor(s):"#bbb", fontSize:12, fontWeight:700, cursor:"pointer" }}>{s}</button>
-                ))}
-              </div>
-            </div>
-            <div>
               <label style={lStyle}>위치</label>
               <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:2 }}>
                 {locations.map(l => (
@@ -1129,6 +1120,14 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
                 ))}
               </div>
               <AddCustomInput placeholder="위치 직접 추가..." onAdd={name => { onAddLocation(name); set("location",name); }} />
+            </div>
+            <div>
+              <label style={lStyle}>상태</label>
+              <div style={{ display:"flex", gap:6 }}>
+                {STATUS_OPTIONS.map(s => (
+                  <button key={s} onClick={() => set("status",s)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:form.status===s?statusColor(s):"#e2ddd7", background:form.status===s?statusColor(s)+"18":"#fff", color:form.status===s?statusColor(s):"#bbb", fontSize:12, fontWeight:700, cursor:"pointer" }}>{s}</button>
+                ))}
+              </div>
             </div>
           </div>
         </Card>
@@ -1340,7 +1339,7 @@ function App({ user }) {
       {!selected && tab !== "add" && (
         <div style={{ textAlign:"center", padding:"10px 16px 14px", borderTop:"1px solid #ede8e1", background:"#faf8f5" }}>
           <div style={{ fontSize:10, color:"#ccc", fontWeight:500, lineHeight:1.8 }}>
-            Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>Version 1.0.2
+            Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>Version 1.0.3
           </div>
         </div>
       )}

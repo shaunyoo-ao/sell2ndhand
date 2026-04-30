@@ -316,7 +316,6 @@ function LoginScreen({ onGoogleLogin, onAppleLogin, error, loading }) {
       </div>
 
       <p style={{ fontSize:11, color:"#ccc", marginTop:28, textAlign:"center", lineHeight:1.7 }}>
-        인가된 계정만 접근할 수 있습니다.<br/>
         Copyright © 2026, shaun.yoo.ao All rights reserved.
       </p>
     </div>
@@ -1182,7 +1181,7 @@ function Root() {
     setAuthError(null);
     setAuthLoading(true);
     auth.signInWithPopup(googleProvider)
-      .catch(e => setAuthError("로그인 실패: " + e.message))
+      .catch(e => { if (e.code !== "auth/popup-closed-by-user") setAuthError("로그인 실패: " + e.message); })
       .finally(() => setAuthLoading(false));
   };
 
@@ -1190,7 +1189,7 @@ function Root() {
     setAuthError(null);
     setAuthLoading(true);
     auth.signInWithPopup(appleProvider)
-      .catch(e => setAuthError("로그인 실패: " + e.message))
+      .catch(e => { if (e.code !== "auth/popup-closed-by-user") setAuthError("로그인 실패: " + e.message); })
       .finally(() => setAuthLoading(false));
   };
 

@@ -1181,7 +1181,7 @@ function Root() {
     setAuthError(null);
     setAuthLoading(true);
     auth.signInWithPopup(googleProvider)
-      .catch(e => { if (e.code !== "auth/popup-closed-by-user") setAuthError("로그인 실패: " + e.message); })
+      .catch(e => setAuthError("로그인 실패: " + e.code))
       .finally(() => setAuthLoading(false));
   };
 
@@ -1189,7 +1189,7 @@ function Root() {
     setAuthError(null);
     setAuthLoading(true);
     auth.signInWithPopup(appleProvider)
-      .catch(e => { if (e.code !== "auth/popup-closed-by-user") setAuthError("로그인 실패: " + e.message); })
+      .catch(e => setAuthError("로그인 실패: " + e.code))
       .finally(() => setAuthLoading(false));
   };
 

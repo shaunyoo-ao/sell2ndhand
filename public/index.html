@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sell2ndHand</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<!-- React + Babel -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+<!-- Firebase compat SDK v10 -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f0ece6; min-height: 100vh; font-family: 'Noto Sans KR', -apple-system, sans-serif; }
+  #root { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; background: #faf8f5; box-shadow: 0 0 60px rgba(0,0,0,0.12); }
+  input, select, textarea { font-family: inherit; }
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- Firebase init (plain JS, runs before Babel) -->
+<script>
+  firebase.initializeApp({
+    apiKey:            "AIzaSyB8_shUHBshfFRh-kC-V0PqHeoK8q5wBuQ",
+    authDomain:        "sell2ndhand-1045.firebaseapp.com",
+    projectId:         "sell2ndhand-1045",
+    storageBucket:     "sell2ndhand-1045.firebasestorage.app",
+    messagingSenderId: "238372371247",
+    appId:             "1:238372371247:web:dfca88b3e5a09a8659bfda"
+  });
+  var db      = firebase.firestore();
+  var auth    = firebase.auth();
+  var storage = firebase.storage();
+  var googleProvider = new firebase.auth.GoogleAuthProvider();
+  var appleProvider  = new firebase.auth.OAuthProvider('apple.com');
+  appleProvider.addScope('email');
+  appleProvider.addScope('name');
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ─── 인증 허용 계정 ───────────────────────────────────────────────
+const ALLOWED_EMAILS = ["shaun.yoo.ao@gmail.com", "lee.yeonvely@icloud.com"];
+
+// ─── 통화 설정 ────────────────────────────────────────────────────
+const CURRENCIES = {
+  KRW: { symbol: "₩", code: "KRW", label: "원화",  locale: "ko-KR" },
+  USD: { symbol: "$", code: "USD", label: "달러",   locale: "en-US" },
+  ZAR: { symbol: "R", code: "ZAR", label: "랜드",   locale: "en-ZA" },
+};
+const formatPrice = (amount, currency) => {
+  if (!amount && amount !== 0) return "—";
+  const cur = CURRENCIES[currency] || CURRENCIES.KRW;
+  return cur.symbol + Number(amount).toLocaleString(cur.locale);
+};
+
+// ─── 기본 카테고리·위치 ─────────────────────────────────────────
+const DEFAULT_CATEGORIES = ["가구","가전","의류","스포츠","도서","주방","기타"];
+const DEFAULT_LOCATIONS  = ["거실","안방","작은방","주방","창고","베란다","서재"];
+const STATUS_OPTIONS     = ["새것","양호","수리필요"];
+const PRIORITY_OPTIONS   = ["높음","보통","낮음"];
+
+const statusColor   = s => ({ "새것":"#22c55e","양호":"#3b82f6","수리필요":"#f59e0b" }[s]||"#888");
+const priorityColor = p => ({ "높음":"#ef4444","보통":"#f59e0b","낮음":"#6b7280" }[p]||"#888");
+const categoryIcon  = c => ({ "가구":"🛋","가전":"📺","의류":"👔","스포츠":"⛺","도서":"📚","주방":"🍳","기타":"📦" }[c]||"📦");
+
+// ─── 환율 유틸 ────────────────────────────────────────────────────
+const RATES_CACHE_KEY    = "sell2ndhand_rates";
+const RATES_CACHE_TTL_MS = 60 * 60 * 1000;
+
+async function fetchRates() {
+  try {
+    const cached = localStorage.getItem(RATES_CACHE_KEY);
+    if (cached) {
+      const { ts, rates } = JSON.parse(cached);
+      if (Date.now() - ts < RATES_CACHE_TTL_MS) return rates;
+    }
+  } catch (_) {}
+  try {
+    const resp = await fetch("https://open.er-api.com/v6/latest/USD");
+    const data = await resp.json();
+    const rates = { USD: 1, KRW: data.rates.KRW, ZAR: data.rates.ZAR };
+    localStorage.setItem(RATES_CACHE_KEY, JSON.stringify({ ts: Date.now(), rates }));
+    return rates;
+  } catch (_) { return null; }
+}
+
+function convertPrice(amount, fromCurrency, toCurrency, rates) {
+  if (!rates || !amount) return amount || 0;
+  if (fromCurrency === toCurrency) return amount;
+  const from = rates[fromCurrency] || 1;
+  const to   = rates[toCurrency]   || 1;
+  return (amount / from) * to;
+}
+
+// ─── 이미지 리사이즈 유틸 ─────────────────────────────────────────
+async function resizeImageToBlob(file, targetBytes = 500 * 1024) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement("canvas");
+      let { width, height } = img;
+      const MAX_DIM = 1920;
+      if (width > MAX_DIM)  { height = Math.round(height * MAX_DIM / width);  width  = MAX_DIM; }
+      if (height > MAX_DIM) { width  = Math.round(width  * MAX_DIM / height); height = MAX_DIM; }
+      canvas.width  = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      const tryQ = q => new Promise(res => canvas.toBlob(b => res(b), "image/jpeg", q));
+      (async () => {
+        let blob = await tryQ(0.92);
+        if (blob.size <= targetBytes) { resolve(blob); return; }
+        let lo = 0.1, hi = 0.85, best = null;
+        for (let i = 0; i < 7; i++) {
+          const mid = (lo + hi) / 2;
+          blob = await tryQ(mid);
+          if (blob.size <= targetBytes) { best = blob; lo = mid; }
+          else { hi = mid; }
+        }
+        resolve(best || blob);
+      })();
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function uploadPhotos(itemId, slots) {
+  const results = [];
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    if (slot.type === "url")   { results.push(slot.value); continue; }
+    if (slot.type !== "file")  { continue; }
+    const blob = await resizeImageToBlob(slot.value);
+    const ref  = storage.ref(`items/${itemId}/photo_${i}_${Date.now()}.jpg`);
+    const snap = await ref.put(blob, { contentType: "image/jpeg" });
+    results.push(await snap.ref.getDownloadURL());
+  }
+  return results;
+}
+
+// ─── 공통 스타일 상수 ─────────────────────────────────────────────
+const iStyle   = { border:"1.5px solid #e2ddd7", borderRadius:10, padding:"8px 10px", fontSize:13, color:"#1a1a1a", outline:"none", background:"#faf8f5", width:"100%" };
+const selStyle = { ...iStyle, cursor:"pointer" };
+const lStyle   = { fontSize:11, fontWeight:700, color:"#aaa", display:"block", marginBottom:5 };
+
+// ─── 공통 UI 컴포넌트 ─────────────────────────────────────────────
+function Tag({ color, label }) {
+  return <span style={{ fontSize:10, fontWeight:600, color, background:color+"18", padding:"2px 6px", borderRadius:6 }}>{label}</span>;
+}
+function Card({ children, style }) {
+  return <div style={{ background:"#fff", borderRadius:14, padding:"14px", border:"1px solid #ede8e1", ...style }}>{children}</div>;
+}
+function SectionLabel({ children }) {
+  return <div style={{ fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase", letterSpacing:0.6, marginBottom:10 }}>{children}</div>;
+}
+function Row({ label, children, value }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #f5f0ea" }}>
+      <span style={{ fontSize:13, color:"#666", fontWeight:500, flexShrink:0, marginRight:8 }}>{label}</span>
+      {children || <span style={{ fontSize:13, color:"#1a1a1a", fontWeight:600 }}>{value}</span>}
+    </div>
+  );
+}
+function Toggle({ value, onChange }) {
+  return (
+    <div onClick={() => onChange(!value)} style={{ width:44, height:26, borderRadius:99, cursor:"pointer", transition:"background 0.2s", flexShrink:0, background:value?"#c0392b":"#ddd", position:"relative" }}>
+      <div style={{ position:"absolute", top:3, left:value?21:3, width:20, height:20, background:"#fff", borderRadius:99, transition:"left 0.2s", boxShadow:"0 1px 4px rgba(0,0,0,0.2)" }} />
+    </div>
+  );
+}
+function CheckItem({ label, checked, onChange }) {
+  return (
+    <div onClick={() => onChange(!checked)} style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 0", borderBottom:"1px solid #f5f0ea", cursor:"pointer" }}>
+      <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${checked?"#c0392b":"#d1c9bc"}`, background:checked?"#c0392b":"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, transition:"all 0.2s" }}>
+        {checked && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
+      </div>
+      <span style={{ fontSize:14, color:checked?"#bbb":"#1a1a1a", textDecoration:checked?"line-through":"none", fontWeight:500 }}>{label}</span>
+    </div>
+  );
+}
+function PhotoPlaceholder({ label="사진", size=80, style: extraStyle={} }) {
+  return (
+    <div style={{ width:size, height:size, borderRadius:10, background:"#f0ece6", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", border:"1.5px dashed #d1c9bc", flexShrink:0, ...extraStyle }}>
+      <svg width="28" height="24" viewBox="0 0 28 24" fill="none">
+        <rect x="1" y="4" width="26" height="18" rx="3" stroke="#b8afa5" strokeWidth="1.5"/>
+        <circle cx="14" cy="13" r="4" stroke="#b8afa5" strokeWidth="1.5"/>
+        <path d="M9 4l2-3h6l2 3" stroke="#b8afa5" strokeWidth="1.5" strokeLinejoin="round"/>
+      </svg>
+      <span style={{ fontSize:9, color:"#b8afa5", marginTop:3, fontFamily:"monospace" }}>{label}</span>
+    </div>
+  );
+}
+function AddCustomInput({ onAdd, placeholder }) {
+  const [val, setVal] = useState("");
+  const submit = () => { if (val.trim()) { onAdd(val.trim()); setVal(""); } };
+  return (
+    <div style={{ display:"flex", gap:6, marginTop:6 }}>
+      <input value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key==="Enter" && submit()} style={{ ...iStyle, flex:1 }} placeholder={placeholder} />
+      <button onClick={submit} style={{ background:"#c0392b", color:"#fff", border:"none", borderRadius:10, padding:"0 14px", fontSize:18, cursor:"pointer", fontWeight:700 }}>+</button>
+    </div>
+  );
+}
+
+// ─── 사진 업로더 ─────────────────────────────────────────────────
+function PhotoUploader({ initialUrls=[], onChange, itemId=null }) {
+  const initSlots = () => {
+    const s = (initialUrls||[]).slice(0,4).map(url => ({ type:"url", value:url, preview:url }));
+    while (s.length < 4) s.push({ type:"empty", value:null, preview:null });
+    return s;
+  };
+  const [slots, setSlots] = useState(initSlots);
+  const labels = ["대표사진","사진2","사진3","사진4"];
+
+  useEffect(() => {
+    const next = initSlots();
+    setSlots(next);
+  }, [JSON.stringify(initialUrls)]);
+
+  const handleFile = (idx, file) => {
+    if (!file) return;
+    const preview = URL.createObjectURL(file);
+    const next = slots.map((s,i) => i===idx ? { type:"file", value:file, preview } : s);
+    setSlots(next);
+    onChange && onChange(next);
+  };
+  const handleRemove = (idx) => {
+    const next = slots.map((s,i) => i===idx ? { type:"empty", value:null, preview:null } : s);
+    setSlots(next);
+    onChange && onChange(next);
+  };
+
+  return (
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+      {slots.map((slot, i) => (
+        <div key={i} style={{ position:"relative", width:"100%", height:120 }}>
+          {slot.type !== "empty" ? (
+            <>
+              <img src={slot.preview} alt="" style={{ width:"100%", height:120, objectFit:"cover", borderRadius:10, border:"1px solid #ede8e1" }} />
+              <button onClick={() => handleRemove(i)} style={{ position:"absolute", top:4, right:4, background:"rgba(0,0,0,0.55)", border:"none", borderRadius:99, width:24, height:24, cursor:"pointer", color:"#fff", fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 }}>×</button>
+            </>
+          ) : (
+            <label style={{ cursor:"pointer", display:"block", width:"100%", height:"100%" }}>
+              <PhotoPlaceholder label={labels[i]} size="100%" style={{ width:"100%", height:120 }} />
+              <input type="file" accept="image/*" style={{ display:"none" }} onChange={e => handleFile(i, e.target.files[0])} />
+            </label>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── 로그인 화면 ─────────────────────────────────────────────────
+function LoginScreen({ onGoogleLogin, onAppleLogin, error, loading }) {
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:32, background:"#faf8f5" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+        <div style={{ width:48, height:48, background:"#c0392b", borderRadius:14, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2">
+            <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/>
+          </svg>
+        </div>
+        <div>
+          <div style={{ fontSize:24, fontWeight:800, color:"#1a1a1a", letterSpacing:-0.5 }}>Sell2ndHand</div>
+          <div style={{ fontSize:12, color:"#aaa", fontWeight:500 }}>중고물품 판매 관리</div>
+        </div>
+      </div>
+
+      <div style={{ width:"100%", maxWidth:320, marginTop:32, display:"flex", flexDirection:"column", gap:12 }}>
+        {error && (
+          <div style={{ background:"#fff5f5", border:"1.5px solid #fca5a5", borderRadius:12, padding:"12px 14px", fontSize:13, color:"#ef4444", fontWeight:600, textAlign:"center" }}>
+            {error}
+          </div>
+        )}
+        <button onClick={onGoogleLogin} disabled={loading} style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, padding:"14px 20px", background:"#fff", border:"1.5px solid #e2ddd7", borderRadius:14, fontSize:14, fontWeight:700, color:"#1a1a1a", cursor:"pointer", boxShadow:"0 1px 4px rgba(0,0,0,0.06)" }}>
+          <svg width="18" height="18" viewBox="0 0 48 48">
+            <path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34.5 6.5 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.6-.4-3.9z"/>
+            <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 16 19 13 24 13c3.1 0 5.8 1.1 7.9 3l5.7-5.7C34.5 6.5 29.5 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+            <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.1l-6.2-5.2C29.4 35.5 26.8 36 24 36c-5.1 0-9.5-3.2-11.3-7.8l-6.5 5C9.6 39.6 16.3 44 24 44z"/>
+            <path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.2 5.7l6.2 5.2C37 38.9 44 33.1 44 24c0-1.3-.1-2.6-.4-3.9z"/>
+          </svg>
+          Google로 로그인
+        </button>
+        <button onClick={onAppleLogin} disabled={loading} style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, padding:"14px 20px", background:"#000", border:"1.5px solid #000", borderRadius:14, fontSize:14, fontWeight:700, color:"#fff", cursor:"pointer", boxShadow:"0 1px 4px rgba(0,0,0,0.15)" }}>
+          <svg width="18" height="18" viewBox="0 0 814 1000" fill="#fff">
+            <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-42.8-155.5-127.4C46.5 761.1 0 636 0 517.1c0-190.5 125.1-291.8 247.6-291.8 66.3 0 121.5 43.5 163.4 43.5 41.2 0 103.7-45.8 178.1-45.8 31.3 0 108.2 4 165.2 67.8zm-148-170.7c31.3-36.5 53.3-87.8 53.3-139.1 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.7-55.1 135.7 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.3-71.7z"/>
+          </svg>
+          Apple로 로그인
+        </button>
+      </div>
+
+      <p style={{ fontSize:11, color:"#ccc", marginTop:28, textAlign:"center", lineHeight:1.7 }}>
+        인가된 계정만 접근할 수 있습니다.<br/>
+        Copyright © 2026, shaun.yoo.ao All rights reserved.
+      </p>
+    </div>
+  );
+}
+
+// ─── 탭바 ─────────────────────────────────────────────────────────
+function TabBar({ tab, setTab }) {
+  const tabs = [
+    { id:"list",      label:"목록", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> },
+    { id:"checklist", label:"준비", icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg> },
+  ];
+  return (
+    <div style={{ display:"flex", borderTop:"1px solid #ede8e1", background:"#fff", paddingBottom:"env(safe-area-inset-bottom, 8px)" }}>
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => setTab(t.id)} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3, padding:"10px 0 6px", border:"none", background:"transparent", cursor:"pointer", color:tab===t.id?"#c0392b":"#bbb", transition:"color 0.15s" }}>
+          {t.icon}
+          <span style={{ fontSize:10, fontWeight:700 }}>{t.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── 통화 선택기 ─────────────────────────────────────────────────
+function CurrencyPicker({ currency, onChange }) {
+  const [open, setOpen] = useState(false);
+  const cur = CURRENCIES[currency];
+  return (
+    <div style={{ position:"relative" }}>
+      <button onClick={() => setOpen(o => !o)} style={{ background:"#f5f0ea", border:"none", borderRadius:20, padding:"5px 10px", fontSize:12, fontWeight:700, color:"#666", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
+        <span>{cur.symbol}</span><span>{cur.code}</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2.5"><polyline points="6,9 12,15 18,9"/></svg>
+      </button>
+      {open && (
+        <div style={{ position:"absolute", right:0, top:"110%", background:"#fff", borderRadius:12, border:"1px solid #ede8e1", boxShadow:"0 8px 24px rgba(0,0,0,0.12)", zIndex:200, overflow:"hidden", minWidth:140 }}>
+          {Object.entries(CURRENCIES).map(([k,v]) => (
+            <button key={k} onClick={() => { onChange(k); setOpen(false); }} style={{ display:"block", width:"100%", padding:"10px 14px", border:"none", background:currency===k?"#fff5f5":"#fff", color:currency===k?"#c0392b":"#333", fontSize:13, fontWeight:600, cursor:"pointer", textAlign:"left" }}>
+              {v.symbol} {v.code} — {v.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── 목록 화면 ────────────────────────────────────────────────────
+function ListScreen({ items, onSelect, onAdd, categories, currency, rates }) {
+  const [catFilter, setCatFilter] = useState("전체");
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("최신순");
+
+  const filtered = items
+    .filter(i => catFilter === "전체" || i.category === catFilter)
+    .filter(i => i.title.includes(search) || i.category.includes(search))
+    .sort((a, b) => {
+      if (sortBy === "가격높은순") return b.price - a.price;
+      if (sortBy === "가격낮은순") return a.price - b.price;
+      return 0;
+    });
+
+  const totalValue = items.reduce((s, i) =>
+    s + convertPrice(i.price || 0, i.currency || "KRW", currency, rates), 0);
+
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      <div style={{ padding:"14px 16px 0", background:"#faf8f5" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:12 }}>
+          <div>
+            <div style={{ fontSize:11, color:"#aaa", fontWeight:600, marginBottom:2 }}>중고물품 관리</div>
+            <div style={{ fontSize:22, fontWeight:800, color:"#1a1a1a", letterSpacing:-0.5 }}>내 물품 목록</div>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:10, color:"#aaa" }}>예상 총 수익</div>
+              <div style={{ fontSize:16, fontWeight:800, color:"#c0392b" }}>{formatPrice(Math.round(totalValue), currency)}</div>
+            </div>
+            <button onClick={() => onAdd()} style={{ background:"#c0392b", color:"#fff", border:"none", borderRadius:12, padding:"8px 14px", fontSize:13, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:5, whiteSpace:"nowrap" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              등록
+            </button>
+          </div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", background:"#fff", border:"1px solid #ede8e1", borderRadius:12, padding:"8px 12px", gap:8, marginBottom:10 }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#bbb" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="물품 검색..." style={{ flex:1, border:"none", outline:"none", fontSize:14, background:"transparent", color:"#1a1a1a" }}/>
+        </div>
+        <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:10 }}>
+          {["전체", ...categories].map(c => (
+            <button key={c} onClick={() => setCatFilter(c)} style={{ padding:"5px 12px", borderRadius:20, border:"1.5px solid", borderColor:catFilter===c?"#c0392b":"#e2ddd7", background:catFilter===c?"#c0392b":"#fff", color:catFilter===c?"#fff":"#666", fontSize:12, fontWeight:600, whiteSpace:"nowrap", cursor:"pointer", transition:"all 0.15s" }}>{c}</button>
+          ))}
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:8 }}>
+          <span style={{ fontSize:12, color:"#aaa" }}>{filtered.length}개 물품</span>
+          <div style={{ display:"flex", gap:4 }}>
+            {["최신순","가격높은순","가격낮은순"].map(s => (
+              <button key={s} onClick={() => setSortBy(s)} style={{ padding:"3px 8px", borderRadius:8, border:"1px solid", borderColor:sortBy===s?"#c0392b":"#e2ddd7", background:sortBy===s?"#fff5f5":"transparent", color:sortBy===s?"#c0392b":"#aaa", fontSize:10, fontWeight:600, cursor:"pointer" }}>{s}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:"0 16px 16px" }}>
+        {filtered.map(item => (
+          <div key={item.id} onClick={() => onSelect(item)} style={{ background:"#fff", borderRadius:16, marginBottom:10, border:"1px solid #ede8e1", overflow:"hidden", cursor:"pointer", display:"flex", boxShadow:"0 1px 4px rgba(0,0,0,0.04)", transition:"transform 0.1s" }}
+            onMouseDown={e => e.currentTarget.style.transform="scale(0.98)"}
+            onMouseUp={e => e.currentTarget.style.transform="scale(1)"}
+            onTouchStart={e => e.currentTarget.style.transform="scale(0.98)"}
+            onTouchEnd={e => e.currentTarget.style.transform="scale(1)"}
+          >
+            <div style={{ width:88, height:88, flexShrink:0, background:"#f5f0ea", display:"flex", alignItems:"center", justifyContent:"center", position:"relative", overflow:"hidden" }}>
+              {item.photos && item.photos[0]
+                ? <img src={item.photos[0]} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                : <span style={{ fontSize:32 }}>{categoryIcon(item.category)}</span>}
+              {item.sellPriority === "높음" && (
+                <div style={{ position:"absolute", top:6, left:6, background:"#ef4444", borderRadius:6, padding:"1px 5px", fontSize:9, color:"#fff", fontWeight:700 }}>긴급</div>
+              )}
+            </div>
+            <div style={{ flex:1, padding:"10px 12px", minWidth:0 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:4 }}>
+                <div style={{ fontSize:14, fontWeight:700, color:"#1a1a1a", lineHeight:1.3, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
+                <div style={{ fontSize:14, fontWeight:800, color:"#c0392b", whiteSpace:"nowrap" }}>{formatPrice(item.price, item.currency||"KRW")}</div>
+              </div>
+              <div style={{ display:"flex", gap:5, marginTop:5, flexWrap:"wrap" }}>
+                <Tag color={statusColor(item.status)} label={item.status} />
+                <Tag color="#8b7355" label={item.category} />
+                <Tag color="#6b7280" label={item.location} />
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
+                <div style={{ fontSize:11, color:"#aaa" }}>관심자 {(item.leads||[]).length}명</div>
+                {item.stored && <div style={{ fontSize:10, color:"#3b82f6", fontWeight:700 }}>📦 보관중</div>}
+              </div>
+            </div>
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <div style={{ textAlign:"center", padding:"48px 0", color:"#ccc" }}>
+            <div style={{ fontSize:36, marginBottom:10 }}>📦</div>
+            <div style={{ fontSize:14, fontWeight:600 }}>등록된 물품이 없습니다</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── 상세 화면 ────────────────────────────────────────────────────
+function DetailScreen({ item, onBack, onUpdate, onDelete, categories, locations, currency }) {
+  const [tab, setTab] = useState("info");
+  const [li, setLi] = useState(item);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => { setLi(item); }, [item.id]);
+
+  const upd = (field, val) => { const u = {...li, [field]:val}; setLi(u); onUpdate(u); };
+  const updCl = (field, val) => { const u = {...li, checklist:{...li.checklist, [field]:val}}; setLi(u); onUpdate(u); };
+
+  const TABS = [
+    { id:"info",    label:"기본정보" },
+    { id:"leads",   label:`관심자 ${(li.leads||[]).length}` },
+    { id:"selling", label:"판매준비" },
+    { id:"copy",    label:"판매문구" },
+  ];
+
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      <div style={{ background:"#fff", borderBottom:"1px solid #ede8e1" }}>
+        <div style={{ display:"flex", alignItems:"center", padding:"12px 16px", gap:12 }}>
+          <button onClick={onBack} style={{ border:"none", background:"none", cursor:"pointer", padding:4, color:"#1a1a1a" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15,18 9,12 15,6"/></svg>
+          </button>
+          <div style={{ flex:1, fontSize:15, fontWeight:700, color:"#1a1a1a", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{li.title}</div>
+          <Tag color={statusColor(li.status)} label={li.status} />
+        </div>
+        <div style={{ display:"flex", paddingLeft:8 }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ padding:"8px 14px", border:"none", background:"none", cursor:"pointer", fontSize:13, fontWeight:700, color:tab===t.id?"#c0392b":"#bbb", borderBottom:`2.5px solid ${tab===t.id?"#c0392b":"transparent"}`, transition:"all 0.15s" }}>{t.label}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:16 }}>
+        {tab==="info"    && <InfoTab    item={li} upd={upd} categories={categories} locations={locations} currency={currency} />}
+        {tab==="leads"   && <LeadsTab   item={li} upd={upd} currency={li.currency||currency} />}
+        {tab==="selling" && <SellingTab item={li} upd={upd} updCl={updCl} />}
+        {tab==="copy"    && <CopyTab    item={li} currency={li.currency||currency} />}
+        <div style={{ marginTop:32, paddingTop:20, borderTop:"1px solid #f0ece6" }}>
+          {!confirmDelete ? (
+            <button onClick={() => setConfirmDelete(true)} style={{ width:"100%", padding:"13px", border:"1.5px solid #fca5a5", borderRadius:14, background:"#fff", color:"#ef4444", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4h6v2"/></svg>
+              이 물품 삭제
+            </button>
+          ) : (
+            <div style={{ background:"#fff5f5", border:"1.5px solid #fca5a5", borderRadius:14, padding:"16px" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:"#1a1a1a", marginBottom:4 }}>정말 삭제하시겠어요?</div>
+              <div style={{ fontSize:12, color:"#888", marginBottom:14 }}><span style={{ fontWeight:700, color:"#ef4444" }}>"{li.title}"</span> 물품과 관련된 모든 정보가 영구 삭제됩니다.</div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => setConfirmDelete(false)} style={{ flex:1, padding:"11px", border:"1.5px solid #e2ddd7", borderRadius:10, background:"#fff", color:"#666", fontSize:13, fontWeight:700, cursor:"pointer" }}>취소</button>
+                <button onClick={() => { onDelete(li.id); onBack(); }} style={{ flex:1, padding:"11px", border:"none", borderRadius:10, background:"#ef4444", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>삭제 확인</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoTab({ item, upd, categories, locations, currency }) {
+  const cur = item.currency || currency;
+  const handlePhotoChange = async (slots) => {
+    const hasNewFiles = slots.some(s => s.type === "file");
+    if (!hasNewFiles) {
+      const urls = slots.filter(s => s.type === "url").map(s => s.value);
+      upd("photos", urls);
+      return;
+    }
+    const urls = await uploadPhotos(item.id, slots);
+    upd("photos", urls);
+  };
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div>
+        <SectionLabel>사진 (최대 4장)</SectionLabel>
+        <PhotoUploader initialUrls={item.photos||[]} onChange={handlePhotoChange} itemId={item.id} />
+      </div>
+      <Card>
+        <SectionLabel>분류</SectionLabel>
+        <Row label="카테고리">
+          <select value={item.category} onChange={e => upd("category",e.target.value)} style={{...selStyle,width:"auto"}}>
+            {categories.map(c => <option key={c}>{c}</option>)}
+          </select>
+        </Row>
+        <Row label="상태">
+          <div style={{ display:"flex", gap:5 }}>
+            {STATUS_OPTIONS.map(s => (
+              <button key={s} onClick={() => upd("status",s)} style={{ padding:"4px 8px", borderRadius:20, border:"1.5px solid", borderColor:item.status===s?statusColor(s):"#e2ddd7", background:item.status===s?statusColor(s)+"18":"#fff", color:item.status===s?statusColor(s):"#999", fontSize:11, fontWeight:700, cursor:"pointer" }}>{s}</button>
+            ))}
+          </div>
+        </Row>
+        <Row label="위치">
+          <select value={item.location} onChange={e => upd("location",e.target.value)} style={{...selStyle,width:"auto"}}>
+            {locations.map(l => <option key={l}>{l}</option>)}
+          </select>
+        </Row>
+        <Row label="보관중"><Toggle value={item.stored} onChange={v => upd("stored",v)} /></Row>
+      </Card>
+      <Card>
+        <SectionLabel>가격 정보</SectionLabel>
+        <Row label="통화">
+          <select value={cur} onChange={e => upd("currency",e.target.value)} style={{...selStyle,width:"auto"}}>
+            {Object.entries(CURRENCIES).map(([k,v]) => <option key={k} value={k}>{v.symbol} {v.code} ({v.label})</option>)}
+          </select>
+        </Row>
+        <Row label="희망가격">
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontSize:13, color:"#888", fontWeight:700 }}>{CURRENCIES[cur]?.symbol}</span>
+            <input defaultValue={item.price} onBlur={e => upd("price",Number(e.target.value))} style={{...iStyle,width:120,textAlign:"right"}} type="number" />
+          </div>
+        </Row>
+        <Row label="시장가 메모">
+          <input defaultValue={item.marketMemo} onBlur={e => upd("marketMemo",e.target.value)} style={{...iStyle,width:160}} placeholder="시세 참고..." />
+        </Row>
+      </Card>
+      <Card>
+        <SectionLabel>제품 정보</SectionLabel>
+        <Row label="브랜드" value={item.brand||"—"} />
+        <Row label="구매연도" value={item.year?item.year+"년":"—"} />
+        <Row label="크기" value={item.dimensions||"—"} />
+        <Row label="무게" value={item.weight||"—"} />
+        <Row label="상태 메모">
+          <input defaultValue={item.condition} onBlur={e => upd("condition",e.target.value)} style={{...iStyle,width:160}} placeholder="특이사항..." />
+        </Row>
+      </Card>
+      <Card>
+        <SectionLabel>판매 우선순위</SectionLabel>
+        <div style={{ display:"flex", gap:8 }}>
+          {PRIORITY_OPTIONS.map(p => (
+            <button key={p} onClick={() => upd("sellPriority",p)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:item.sellPriority===p?priorityColor(p):"#e2ddd7", background:item.sellPriority===p?priorityColor(p)+"15":"#fff", color:item.sellPriority===p?priorityColor(p):"#bbb", fontSize:13, fontWeight:700, cursor:"pointer" }}>{p}</button>
+          ))}
+        </div>
+      </Card>
+      <Card>
+        <SectionLabel>메모</SectionLabel>
+        <textarea defaultValue={item.memo} onBlur={e => upd("memo",e.target.value)} style={{...iStyle,height:72,resize:"none"}} placeholder="기타 참고사항..." />
+      </Card>
+    </div>
+  );
+}
+
+function LeadsTab({ item, upd, currency }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [nl, setNl] = useState({ name:"", contact:"", priority:"보통", offer:"", note:"" });
+  const addLead = () => {
+    if (!nl.name.trim()) return;
+    upd("leads", [...(item.leads||[]), {...nl, id:Date.now(), offer:Number(nl.offer)}]);
+    setNl({ name:"", contact:"", priority:"보통", offer:"", note:"" });
+    setShowAdd(false);
+  };
+  const delLead = id => upd("leads", (item.leads||[]).filter(l => l.id !== id));
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span style={{ fontSize:14, fontWeight:700, color:"#1a1a1a" }}>관심자 목록</span>
+        <button onClick={() => setShowAdd(s => !s)} style={{ background:"#c0392b", color:"#fff", border:"none", borderRadius:10, padding:"6px 14px", fontSize:12, fontWeight:700, cursor:"pointer" }}>+ 추가</button>
+      </div>
+      {showAdd && (
+        <Card>
+          <SectionLabel>새 관심자 추가</SectionLabel>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <input value={nl.name} onChange={e => setNl({...nl,name:e.target.value})} style={iStyle} placeholder="이름 *" />
+            <input value={nl.contact} onChange={e => setNl({...nl,contact:e.target.value})} style={iStyle} placeholder="연락처 (전화 / 카카오 / SNS)" />
+            <input value={nl.offer} onChange={e => setNl({...nl,offer:e.target.value})} style={iStyle} placeholder={`제안가 (${CURRENCIES[currency]?.symbol||""})`} type="number" />
+            <div style={{ display:"flex", gap:6 }}>
+              {PRIORITY_OPTIONS.map(p => (
+                <button key={p} onClick={() => setNl({...nl,priority:p})} style={{ flex:1, padding:"7px 0", borderRadius:10, border:"1.5px solid", borderColor:nl.priority===p?priorityColor(p):"#e2ddd7", background:nl.priority===p?priorityColor(p)+"15":"#fff", color:nl.priority===p?priorityColor(p):"#bbb", fontSize:12, fontWeight:700, cursor:"pointer" }}>{p}</button>
+              ))}
+            </div>
+            <input value={nl.note} onChange={e => setNl({...nl,note:e.target.value})} style={iStyle} placeholder="메모" />
+            <button onClick={addLead} style={{ background:"#c0392b", color:"#fff", border:"none", borderRadius:10, padding:"11px", fontSize:13, fontWeight:700, cursor:"pointer" }}>저장</button>
+          </div>
+        </Card>
+      )}
+      {(item.leads||[]).length===0 && !showAdd && (
+        <div style={{ textAlign:"center", padding:"36px 0", color:"#ccc" }}>
+          <div style={{ fontSize:30, marginBottom:8 }}>👤</div>
+          <div style={{ fontSize:13, fontWeight:600 }}>등록된 관심자가 없습니다</div>
+        </div>
+      )}
+      {(item.leads||[]).map(lead => (
+        <Card key={lead.id}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+            <div style={{ flex:1 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5 }}>
+                <span style={{ fontSize:15, fontWeight:700, color:"#1a1a1a" }}>{lead.name}</span>
+                <Tag color={priorityColor(lead.priority)} label={lead.priority} />
+              </div>
+              {lead.contact && <div style={{ fontSize:12, color:"#777", marginBottom:4 }}>📞 {lead.contact}</div>}
+              {lead.offer>0 && <div style={{ fontSize:13, fontWeight:700, color:"#c0392b" }}>제안가: {formatPrice(lead.offer,currency)}</div>}
+              {lead.note && <div style={{ fontSize:12, color:"#999", marginTop:4 }}>💬 {lead.note}</div>}
+            </div>
+            <button onClick={() => delLead(lead.id)} style={{ border:"none", background:"none", cursor:"pointer", color:"#ddd", padding:4 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4h6v2"/></svg>
+            </button>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function SellingTab({ item, upd, updCl }) {
+  const cl = item.checklist || {};
+  const checks = [
+    { key:"upload",    label:"중고장터 업로드" },
+    { key:"contact",   label:"구매자 컨택" },
+    { key:"negotiate", label:"판매 가격 협상" },
+    { key:"prepare",   label:"판매 준비 (분리/포장)" },
+  ];
+  const doneCount = checks.filter(c => cl[c.key]).length;
+  const pct = Math.round(doneCount / checks.length * 100);
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <Card>
+        <SectionLabel>판매 준비 체크리스트</SectionLabel>
+        {checks.map(c => <CheckItem key={c.key} label={c.label} checked={!!cl[c.key]} onChange={v => updCl(c.key,v)} />)}
+      </Card>
+      <Card>
+        <SectionLabel>진행도</SectionLabel>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+          <span style={{ fontSize:12, color:"#888" }}>판매 준비 완료</span>
+          <span style={{ fontSize:14, fontWeight:800, color:pct===100?"#22c55e":"#c0392b" }}>{pct}%</span>
+        </div>
+        <div style={{ background:"#f0ece6", borderRadius:99, height:10, overflow:"hidden" }}>
+          <div style={{ width:`${pct}%`, height:"100%", background:pct===100?"#22c55e":"#c0392b", borderRadius:99, transition:"width 0.5s" }} />
+        </div>
+      </Card>
+      <Card>
+        <SectionLabel>판매 우선순위</SectionLabel>
+        <div style={{ display:"flex", gap:8 }}>
+          {PRIORITY_OPTIONS.map(p => (
+            <button key={p} onClick={() => upd("sellPriority",p)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:item.sellPriority===p?priorityColor(p):"#e2ddd7", background:item.sellPriority===p?priorityColor(p)+"15":"#fff", color:item.sellPriority===p?priorityColor(p):"#bbb", fontSize:13, fontWeight:700, cursor:"pointer" }}>{p}</button>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function CopyTab({ item, currency }) {
+  const [copied, setCopied] = useState(false);
+  const [lang, setLang] = useState("ko");
+  const cur = CURRENCIES[currency] || CURRENCIES.KRW;
+  const priceStr = `${cur.symbol}${Number(item.price).toLocaleString(cur.locale)}`;
+  const statusKo = { "새것":"새상품 (미사용)","양호":"양호","수리필요":"수리 필요" }[item.status]||item.status;
+  const statusEn = { "새것":"Brand new (unused)","양호":"Good condition","수리필요":"Needs repair" }[item.status]||item.status;
+  const koLines = [`📦 ${item.title}`,``,item.brand?`▪ 브랜드: ${item.brand}`:null,item.year?`▪ 구매연도: ${item.year}년`:null,item.dimensions&&item.dimensions!=="—"?`▪ 크기: ${item.dimensions}`:null,item.weight&&item.weight!=="—"?`▪ 무게: ${item.weight}`:null,`▪ 상태: ${statusKo}`,item.condition?`▪ 상태 메모: ${item.condition}`:null,``,`💰 희망가: ${priceStr}`].filter(l=>l!==null).join("\n");
+  const enLines = [`📦 ${item.title}`,``,item.brand?`▪ Brand: ${item.brand}`:null,item.year?`▪ Year purchased: ${item.year}`:null,item.dimensions&&item.dimensions!=="—"?`▪ Size: ${item.dimensions}`:null,item.weight&&item.weight!=="—"?`▪ Weight: ${item.weight}`:null,`▪ Condition: ${statusEn}`,item.condition?`▪ Notes: ${item.condition}`:null,``,`💰 Asking price: ${priceStr}`].filter(l=>l!==null).join("\n");
+  const lines = lang==="ko" ? koLines : enLines;
+  const handleCopy = () => {
+    const done = () => { setCopied(true); setTimeout(()=>setCopied(false),2000); };
+    if (navigator.clipboard) { navigator.clipboard.writeText(lines).then(done); }
+    else { const ta=document.createElement("textarea"); ta.value=lines; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); }
+  };
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <Card>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <SectionLabel>판매 문구</SectionLabel>
+          <div style={{ display:"flex", gap:0, border:"1.5px solid #e2ddd7", borderRadius:10, overflow:"hidden" }}>
+            {[["ko","한국어"],["en","English"]].map(([code,label]) => (
+              <button key={code} onClick={() => setLang(code)} style={{ padding:"5px 12px", border:"none", fontSize:12, fontWeight:700, cursor:"pointer", background:lang===code?"#c0392b":"#fff", color:lang===code?"#fff":"#aaa", transition:"all 0.15s" }}>{label}</button>
+            ))}
+          </div>
+        </div>
+        <pre style={{ whiteSpace:"pre-wrap", wordBreak:"break-word", fontSize:13, lineHeight:1.9, color:"#333", background:"#faf8f5", borderRadius:10, padding:"14px", border:"1px solid #ede8e1", fontFamily:"inherit", marginBottom:12 }}>{lines}</pre>
+        <button onClick={handleCopy} style={{ width:"100%", background:copied?"#22c55e":"#c0392b", color:"#fff", border:"none", borderRadius:10, padding:"12px", fontSize:13, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, transition:"background 0.2s" }}>
+          {copied
+            ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>복사 완료!</>
+            : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>클립보드에 복사</>}
+        </button>
+      </Card>
+      <div style={{ fontSize:11, color:"#bbb", textAlign:"center", lineHeight:1.7 }}>카카오톡, 당근마켓, Facebook Marketplace 등<br/>메신저에 그대로 붙여넣기 하세요.</div>
+    </div>
+  );
+}
+
+function ChecklistScreen({ items, currency }) {
+  const total     = items.length;
+  const urgent    = items.filter(i => i.sellPriority==="높음").length;
+  const uploaded  = items.filter(i => i.checklist&&i.checklist.upload).length;
+  const contacted = items.filter(i => i.checklist&&i.checklist.contact).length;
+  const CHECKS = [
+    { key:"upload",    label:"업로드" },
+    { key:"contact",   label:"컨택" },
+    { key:"negotiate", label:"협상" },
+    { key:"prepare",   label:"준비" },
+  ];
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      <div style={{ padding:"16px 16px 0" }}>
+        <div style={{ fontSize:22, fontWeight:800, color:"#1a1a1a", marginBottom:2 }}>판매 준비 현황</div>
+        <div style={{ fontSize:13, color:"#aaa", marginBottom:14 }}>물품별 판매 우선순위를 확인하세요</div>
+        <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+          {[{label:"전체 물품",value:total,color:"#1a1a1a",bg:"#fff"},{label:"긴급 처리",value:urgent,color:"#ef4444",bg:"#fff5f5"},{label:"업로드 완료",value:uploaded,color:"#22c55e",bg:"#f0fdf4"},{label:"컨택 완료",value:contacted,color:"#3b82f6",bg:"#eff6ff"}].map(s => (
+            <div key={s.label} style={{ flex:1, background:s.bg, borderRadius:12, padding:"10px 6px", border:"1px solid #ede8e1", textAlign:"center" }}>
+              <div style={{ fontSize:20, fontWeight:800, color:s.color }}>{s.value}</div>
+              <div style={{ fontSize:9, color:"#aaa", fontWeight:600, marginTop:2, lineHeight:1.3 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:"0 16px 16px" }}>
+        {PRIORITY_OPTIONS.map(p => {
+          const group = items.filter(i => i.sellPriority===p);
+          if (!group.length) return null;
+          return (
+            <div key={p} style={{ marginBottom:20 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                <div style={{ width:10, height:10, borderRadius:99, background:priorityColor(p) }} />
+                <span style={{ fontSize:13, fontWeight:700, color:"#1a1a1a" }}>{p} 우선순위</span>
+                <span style={{ fontSize:12, color:"#bbb" }}>{group.length}건</span>
+              </div>
+              {group.map(item => {
+                const cl = item.checklist||{};
+                const doneCount = CHECKS.filter(c => cl[c.key]).length;
+                const pct = Math.round(doneCount/CHECKS.length*100);
+                return (
+                  <div key={item.id} style={{ background:"#fff", borderRadius:14, padding:"12px", border:"1px solid #ede8e1", marginBottom:8 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                      <span style={{ fontSize:22 }}>{categoryIcon(item.category)}</span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:700, color:"#1a1a1a", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
+                        <div style={{ fontSize:11, color:"#aaa" }}>{item.location} · {formatPrice(item.price,item.currency||currency)}</div>
+                      </div>
+                      <span style={{ fontSize:12, fontWeight:800, color:pct===100?"#22c55e":"#c0392b" }}>{pct}%</span>
+                    </div>
+                    <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                      {CHECKS.map(c => {
+                        const done = cl[c.key];
+                        const col  = done?"#22c55e":"#ddd";
+                        return (
+                          <div key={c.key} style={{ display:"flex", alignItems:"center", gap:4, background:col+"18", borderRadius:8, padding:"3px 8px" }}>
+                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={col} strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>
+                            <span style={{ fontSize:10, fontWeight:600, color:col }}>{c.label}</span>
+                          </div>
+                        );
+                      })}
+                      {(item.leads||[]).length>0 && (
+                        <div style={{ display:"flex", alignItems:"center", gap:4, background:"#3b82f618", borderRadius:8, padding:"3px 8px" }}>
+                          <span style={{ fontSize:10, fontWeight:600, color:"#3b82f6" }}>관심자 {item.leads.length}명</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── 등록 화면 ────────────────────────────────────────────────────
+function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCategory, onAddLocation }) {
+  const [form, setForm] = useState({
+    title:"", category:categories[0]||"기타", status:"양호",
+    location:locations[0]||"거실", price:"", currency,
+    marketMemo:"", condition:"", brand:"", year:"",
+    dimensions:"", weight:"", memo:"", sellPriority:"보통", stored:true
+  });
+  const [photoSlots, setPhotoSlots] = useState([
+    {type:"empty",value:null,preview:null},{type:"empty",value:null,preview:null},
+    {type:"empty",value:null,preview:null},{type:"empty",value:null,preview:null}
+  ]);
+  const [submitting, setSubmitting] = useState(false);
+  const set = (k,v) => setForm(f => ({...f,[k]:v}));
+
+  const submit = async () => {
+    if (!form.title.trim() || submitting) return;
+    setSubmitting(true);
+    try {
+      const newRef = db.collection("items").doc();
+      const photoUrls = await uploadPhotos(newRef.id, photoSlots);
+      await newRef.set({
+        ...form,
+        price:  Number(form.price)||0,
+        year:   Number(form.year)||new Date().getFullYear(),
+        photos: photoUrls,
+        leads:  [],
+        checklist: { upload:false, contact:false, negotiate:false, prepare:false },
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      onAdd();
+    } catch(e) {
+      console.error(e);
+      setSubmitting(false);
+    }
+  };
+
+  const cur = form.currency;
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      <div style={{ display:"flex", alignItems:"center", padding:"14px 16px", background:"#fff", borderBottom:"1px solid #ede8e1", gap:12 }}>
+        <button onClick={onBack} style={{ border:"none", background:"none", cursor:"pointer", padding:4, color:"#1a1a1a" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15,18 9,12 15,6"/></svg>
+        </button>
+        <div style={{ flex:1, fontSize:17, fontWeight:800, color:"#1a1a1a" }}>물품 등록</div>
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:14 }}>
+        <Card>
+          <SectionLabel>사진 (최대 4장)</SectionLabel>
+          <PhotoUploader initialUrls={[]} onChange={setPhotoSlots} />
+        </Card>
+        <Card>
+          <SectionLabel>기본 정보</SectionLabel>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div>
+              <label style={lStyle}>제목 *</label>
+              <input value={form.title} onChange={e => set("title",e.target.value)} style={iStyle} placeholder="물품 이름을 입력하세요" />
+            </div>
+            <div>
+              <label style={lStyle}>카테고리</label>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:2 }}>
+                {categories.map(c => (
+                  <button key={c} onClick={() => set("category",c)} style={{ padding:"5px 11px", borderRadius:20, border:"1.5px solid", borderColor:form.category===c?"#c0392b":"#e2ddd7", background:form.category===c?"#fff5f5":"#fff", color:form.category===c?"#c0392b":"#888", fontSize:12, fontWeight:600, cursor:"pointer" }}>{c}</button>
+                ))}
+              </div>
+              <AddCustomInput placeholder="카테고리 직접 추가..." onAdd={name => { onAddCategory(name); set("category",name); }} />
+            </div>
+            <div>
+              <label style={lStyle}>상태</label>
+              <div style={{ display:"flex", gap:6 }}>
+                {STATUS_OPTIONS.map(s => (
+                  <button key={s} onClick={() => set("status",s)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:form.status===s?statusColor(s):"#e2ddd7", background:form.status===s?statusColor(s)+"18":"#fff", color:form.status===s?statusColor(s):"#bbb", fontSize:12, fontWeight:700, cursor:"pointer" }}>{s}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label style={lStyle}>위치</label>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:2 }}>
+                {locations.map(l => (
+                  <button key={l} onClick={() => set("location",l)} style={{ padding:"5px 11px", borderRadius:20, border:"1.5px solid", borderColor:form.location===l?"#c0392b":"#e2ddd7", background:form.location===l?"#fff5f5":"#fff", color:form.location===l?"#c0392b":"#888", fontSize:12, fontWeight:600, cursor:"pointer" }}>{l}</button>
+                ))}
+              </div>
+              <AddCustomInput placeholder="위치 직접 추가..." onAdd={name => { onAddLocation(name); set("location",name); }} />
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <SectionLabel>가격 정보</SectionLabel>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            <div>
+              <label style={lStyle}>통화</label>
+              <select value={cur} onChange={e => set("currency",e.target.value)} style={selStyle}>
+                {Object.entries(CURRENCIES).map(([k,v]) => <option key={k} value={k}>{v.symbol} {v.code} — {v.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={lStyle}>희망 판매가</label>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ fontSize:16, fontWeight:700, color:"#888", width:20 }}>{CURRENCIES[cur]?.symbol}</span>
+                <input value={form.price} onChange={e => set("price",e.target.value)} style={iStyle} type="number" placeholder="0" />
+              </div>
+            </div>
+            <div>
+              <label style={lStyle}>참고 시장가 메모</label>
+              <input value={form.marketMemo} onChange={e => set("marketMemo",e.target.value)} style={iStyle} placeholder="당근·중고나라 시세, 링크 등..." />
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <SectionLabel>제품 세부 정보</SectionLabel>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            <div style={{ display:"flex", gap:8 }}>
+              <div style={{ flex:1 }}><label style={lStyle}>브랜드</label><input value={form.brand} onChange={e => set("brand",e.target.value)} style={iStyle} placeholder="제조사" /></div>
+              <div style={{ flex:1 }}><label style={lStyle}>구매연도</label><input value={form.year} onChange={e => set("year",e.target.value)} style={iStyle} placeholder="2022" type="number" /></div>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <div style={{ flex:1 }}><label style={lStyle}>크기/치수</label><input value={form.dimensions} onChange={e => set("dimensions",e.target.value)} style={iStyle} placeholder="예) 120×80cm" /></div>
+              <div style={{ flex:1 }}><label style={lStyle}>무게</label><input value={form.weight} onChange={e => set("weight",e.target.value)} style={iStyle} placeholder="예) 5kg" /></div>
+            </div>
+            <div><label style={lStyle}>상태 메모</label><input value={form.condition} onChange={e => set("condition",e.target.value)} style={iStyle} placeholder="스크래치, 파손 등 특이사항" /></div>
+          </div>
+        </Card>
+        <Card>
+          <SectionLabel>판매 설정</SectionLabel>
+          <Row label="판매 우선순위">
+            <div style={{ display:"flex", gap:5 }}>
+              {PRIORITY_OPTIONS.map(p => (
+                <button key={p} onClick={() => set("sellPriority",p)} style={{ padding:"5px 9px", borderRadius:10, border:"1.5px solid", borderColor:form.sellPriority===p?priorityColor(p):"#e2ddd7", background:form.sellPriority===p?priorityColor(p)+"15":"#fff", color:form.sellPriority===p?priorityColor(p):"#bbb", fontSize:12, fontWeight:700, cursor:"pointer" }}>{p}</button>
+              ))}
+            </div>
+          </Row>
+          <Row label="보관중"><Toggle value={form.stored} onChange={v => set("stored",v)} /></Row>
+        </Card>
+        <Card>
+          <label style={lStyle}>메모</label>
+          <textarea value={form.memo} onChange={e => set("memo",e.target.value)} style={{...iStyle,height:72,resize:"none"}} placeholder="기타 참고사항..." />
+        </Card>
+        <button onClick={submit} disabled={submitting} style={{ background:form.title.trim()&&!submitting?"#c0392b":"#ddd", color:"#fff", border:"none", borderRadius:14, padding:"15px", fontSize:15, fontWeight:800, cursor:form.title.trim()&&!submitting?"pointer":"default", transition:"background 0.2s", letterSpacing:-0.2 }}>
+          {submitting ? "등록 중..." : "등록 완료"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── 메인 앱 ──────────────────────────────────────────────────────
+function App({ user }) {
+  const [items, setItems]           = useState([]);
+  const [tab, setTab]               = useState("list");
+  const [selected, setSelected]     = useState(null);
+  const [toast, setToast]           = useState(null);
+  const [currency, setCurrency]     = useState("KRW");
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [locations, setLocations]   = useState(DEFAULT_LOCATIONS);
+  const [rates, setRates]           = useState(null);
+  const [loading, setLoading]       = useState(true);
+
+  const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 2200); };
+
+  useEffect(() => {
+    const unsubItems = db.collection("items").orderBy("createdAt","desc")
+      .onSnapshot(snap => {
+        setItems(snap.docs.map(d => ({ id:d.id, ...d.data() })));
+        setLoading(false);
+      }, () => setLoading(false));
+    const unsubSettings = db.collection("settings").doc("config")
+      .onSnapshot(snap => {
+        if (snap.exists) {
+          const d = snap.data();
+          if (d.categories && d.categories.length) setCategories(d.categories);
+          if (d.locations  && d.locations.length)  setLocations(d.locations);
+        }
+      });
+    return () => { unsubItems(); unsubSettings(); };
+  }, []);
+
+  useEffect(() => { fetchRates().then(setRates); }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    const fresh = items.find(i => i.id === selected.id);
+    if (fresh) setSelected(fresh);
+  }, [items]);
+
+  const updateItem = async (updated) => {
+    setSelected(updated);
+    const { id, ...data } = updated;
+    await db.collection("items").doc(id).update({
+      ...data,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  };
+
+  const addItem = () => {
+    showToast("✅ 물품이 등록되었습니다");
+    setTab("list");
+  };
+
+  const deleteItem = async (id) => {
+    const item = items.find(i => i.id === id);
+    if (item && item.photos && item.photos.length) {
+      await Promise.all(item.photos.map(url => storage.refFromURL(url).delete().catch(()=>{})));
+    }
+    await db.collection("items").doc(id).delete();
+  };
+
+  const addCategory = (name) => {
+    db.collection("settings").doc("config").set(
+      { categories: firebase.firestore.FieldValue.arrayUnion(name) }, { merge:true }
+    );
+  };
+  const addLocation = (name) => {
+    db.collection("settings").doc("config").set(
+      { locations: firebase.firestore.FieldValue.arrayUnion(name) }, { merge:true }
+    );
+  };
+
+  const handleSignOut = () => auth.signOut();
+
+  let screen;
+  if (loading) {
+    screen = (
+      <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+        <div style={{ width:32, height:32, border:"3px solid #f0ece6", borderTop:"3px solid #c0392b", borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
+        <div style={{ fontSize:13, color:"#aaa" }}>데이터 불러오는 중...</div>
+      </div>
+    );
+  } else if (selected) {
+    screen = <DetailScreen item={selected} onBack={() => setSelected(null)} onUpdate={updateItem} onDelete={deleteItem} categories={categories} locations={locations} currency={currency} />;
+  } else if (tab === "add") {
+    screen = <AddScreen onAdd={addItem} onBack={() => setTab("list")} categories={categories} locations={locations} currency={currency} onAddCategory={addCategory} onAddLocation={addLocation} />;
+  } else if (tab === "checklist") {
+    screen = <ChecklistScreen items={items} currency={currency} />;
+  } else {
+    screen = <ListScreen items={items} onSelect={setSelected} onAdd={() => setTab("add")} categories={categories} currency={currency} rates={rates} />;
+  }
+
+  return (
+    <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", fontFamily:"Noto Sans KR, -apple-system, sans-serif" }}>
+      <div style={{ background:"#fff", padding:"12px 16px", borderBottom:"1px solid #ede8e1", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:100 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ width:30, height:30, background:"#c0392b", borderRadius:9, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5">
+              <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/>
+            </svg>
+          </div>
+          <span style={{ fontSize:16, fontWeight:800, color:"#1a1a1a", letterSpacing:-0.5 }}>Sell2ndHand</span>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <CurrencyPicker currency={currency} onChange={setCurrency} />
+          <button onClick={handleSignOut} style={{ background:"#f5f0ea", border:"none", borderRadius:20, padding:"5px 10px", fontSize:11, fontWeight:700, color:"#888", cursor:"pointer" }}>로그아웃</button>
+        </div>
+      </div>
+      <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>{screen}</div>
+      {!selected && tab !== "add" && <TabBar tab={tab} setTab={setTab} />}
+      {!selected && tab !== "add" && (
+        <div style={{ textAlign:"center", padding:"10px 16px 14px", borderTop:"1px solid #ede8e1", background:"#faf8f5" }}>
+          <div style={{ fontSize:10, color:"#ccc", fontWeight:500, lineHeight:1.8 }}>
+            Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>Version 1.0.0
+          </div>
+        </div>
+      )}
+      {toast && (
+        <div style={{ position:"fixed", bottom:80, left:"50%", transform:"translateX(-50%)", background:"#1a1a1a", color:"#fff", borderRadius:12, padding:"10px 20px", fontSize:13, fontWeight:600, whiteSpace:"nowrap", boxShadow:"0 4px 24px rgba(0,0,0,0.25)", animation:"fadeUp 0.25s ease", zIndex:999 }}>{toast}</div>
+      )}
+    </div>
+  );
+}
+
+// ─── 루트 (인증 상태 관리) ────────────────────────────────────────
+function Root() {
+  const [user, setUser]           = useState(undefined);
+  const [authError, setAuthError] = useState(null);
+  const [authLoading, setAuthLoading] = useState(false);
+
+  useEffect(() => {
+    return auth.onAuthStateChanged(u => {
+      if (u && !ALLOWED_EMAILS.includes(u.email)) {
+        auth.signOut();
+        setUser(null);
+        setAuthError("접근 권한이 없는 계정입니다.");
+      } else {
+        setUser(u || null);
+        if (u) setAuthError(null);
+      }
+    });
+  }, []);
+
+  const handleGoogleLogin = () => {
+    setAuthError(null);
+    setAuthLoading(true);
+    auth.signInWithPopup(googleProvider)
+      .catch(e => setAuthError("로그인 실패: " + e.message))
+      .finally(() => setAuthLoading(false));
+  };
+
+  const handleAppleLogin = () => {
+    setAuthError(null);
+    setAuthLoading(true);
+    auth.signInWithPopup(appleProvider)
+      .catch(e => setAuthError("로그인 실패: " + e.message))
+      .finally(() => setAuthLoading(false));
+  };
+
+  if (user === undefined) {
+    return (
+      <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <div style={{ width:32, height:32, border:"3px solid #f0ece6", borderTop:"3px solid #c0392b", borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
+      </div>
+    );
+  }
+  if (!user) {
+    return <LoginScreen onGoogleLogin={handleGoogleLogin} onAppleLogin={handleAppleLogin} error={authError} loading={authLoading} />;
+  }
+  return <App user={user} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
+</script>
+</body>
+</html>

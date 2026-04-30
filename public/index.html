@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sell2ndHand</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#c0392b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sell2ndHand">
+<link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <!-- React + Babel -->
@@ -48,6 +54,9 @@
   var appleProvider  = new firebase.auth.OAuthProvider('apple.com');
   appleProvider.addScope('email');
   appleProvider.addScope('name');
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(function(){});
+  }
 </script>
 
 <script type="text/babel">
@@ -73,8 +82,12 @@ const DEFAULT_CATEGORIES = ["가구","가전","의류","스포츠","도서","주
 const DEFAULT_LOCATIONS  = ["거실","안방","작은방","주방","창고","베란다","서재"];
 const STATUS_OPTIONS     = ["새것","양호","수리필요"];
 const PRIORITY_OPTIONS   = ["높음","보통","낮음"];
+const STORED_OPTIONS     = ["보관중","보류","판매완료"];
 
 const statusColor   = s => ({ "새것":"#22c55e","양호":"#3b82f6","수리필요":"#f59e0b" }[s]||"#888");
+const storedColor   = s => ({ "보관중":"#3b82f6","보류":"#f59e0b","판매완료":"#22c55e" }[s]||"#6b7280");
+const storedIcon    = s => ({ "보관중":"📦","보류":"⏸","판매완료":"✅" }[s]||"📦");
+const storedVal     = s => (typeof s === "string" && STORED_OPTIONS.includes(s)) ? s : "보관중";
 const priorityColor = p => ({ "높음":"#ef4444","보통":"#f59e0b","낮음":"#6b7280" }[p]||"#888");
 const categoryIcon  = c => ({ "가구":"🛋","가전":"📺","의류":"👔","스포츠":"⛺","도서":"📚","주방":"🍳","기타":"📦" }[c]||"📦");
 
@@ -446,7 +459,7 @@ function ListScreen({ items, onSelect, onAdd, categories, currency, rates }) {
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
                 <div style={{ fontSize:11, color:"#aaa" }}>관심자 {(item.leads||[]).length}명</div>
-                {item.stored && <div style={{ fontSize:10, color:"#3b82f6", fontWeight:700 }}>📦 보관중</div>}
+                <div style={{ fontSize:10, color:storedColor(storedVal(item.stored)), fontWeight:700 }}>{storedIcon(storedVal(item.stored))} {storedVal(item.stored)}</div>
               </div>
             </div>
           </div>
@@ -466,18 +479,17 @@ function ListScreen({ items, onSelect, onAdd, categories, currency, rates }) {
 function DetailScreen({ item, onBack, onUpdate, onDelete, categories, locations, currency }) {
   const [tab, setTab] = useState("info");
   const [li, setLi] = useState(item);
-  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => { setLi(item); }, [item.id]);
 
   const upd = (field, val) => { const u = {...li, [field]:val}; setLi(u); onUpdate(u); };
   const updCl = (field, val) => { const u = {...li, checklist:{...li.checklist, [field]:val}}; setLi(u); onUpdate(u); };
+  const saveInfoTab = (draft) => { setLi(draft); onUpdate(draft); };
 
   const TABS = [
     { id:"info",    label:"기본정보" },
     { id:"leads",   label:`관심자 ${(li.leads||[]).length}` },
     { id:"selling", label:"판매준비" },
-    { id:"copy",    label:"판매문구" },
   ];
 
   return (
@@ -497,110 +509,120 @@ function DetailScreen({ item, onBack, onUpdate, onDelete, categories, locations,
         </div>
       </div>
       <div style={{ flex:1, overflowY:"auto", padding:16 }}>
-        {tab==="info"    && <InfoTab    item={li} upd={upd} categories={categories} locations={locations} currency={currency} />}
+        {tab==="info"    && <InfoTab    item={li} onSave={saveInfoTab} onDelete={onDelete} onBack={onBack} categories={categories} locations={locations} currency={currency} />}
         {tab==="leads"   && <LeadsTab   item={li} upd={upd} currency={li.currency||currency} />}
-        {tab==="selling" && <SellingTab item={li} upd={upd} updCl={updCl} />}
-        {tab==="copy"    && <CopyTab    item={li} currency={li.currency||currency} />}
-        <div style={{ marginTop:32, paddingTop:20, borderTop:"1px solid #f0ece6" }}>
-          {!confirmDelete ? (
-            <button onClick={() => setConfirmDelete(true)} style={{ width:"100%", padding:"13px", border:"1.5px solid #fca5a5", borderRadius:14, background:"#fff", color:"#ef4444", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4h6v2"/></svg>
-              이 물품 삭제
-            </button>
-          ) : (
-            <div style={{ background:"#fff5f5", border:"1.5px solid #fca5a5", borderRadius:14, padding:"16px" }}>
-              <div style={{ fontSize:14, fontWeight:700, color:"#1a1a1a", marginBottom:4 }}>정말 삭제하시겠어요?</div>
-              <div style={{ fontSize:12, color:"#888", marginBottom:14 }}><span style={{ fontWeight:700, color:"#ef4444" }}>"{li.title}"</span> 물품과 관련된 모든 정보가 영구 삭제됩니다.</div>
-              <div style={{ display:"flex", gap:8 }}>
-                <button onClick={() => setConfirmDelete(false)} style={{ flex:1, padding:"11px", border:"1.5px solid #e2ddd7", borderRadius:10, background:"#fff", color:"#666", fontSize:13, fontWeight:700, cursor:"pointer" }}>취소</button>
-                <button onClick={() => { onDelete(li.id); onBack(); }} style={{ flex:1, padding:"11px", border:"none", borderRadius:10, background:"#ef4444", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>삭제 확인</button>
-              </div>
-            </div>
-          )}
-        </div>
+        {tab==="selling" && <SellingTab item={li} upd={upd} updCl={updCl} currency={li.currency||currency} />}
       </div>
     </div>
   );
 }
 
-function InfoTab({ item, upd, categories, locations, currency }) {
-  const cur = item.currency || currency;
+function InfoTab({ item, onSave, onDelete, onBack, categories, locations, currency }) {
+  const [draft, setDraft] = useState({...item});
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const set = (k, v) => setDraft(d => ({...d, [k]: v}));
+  const cur = draft.currency || currency;
+
   const handlePhotoChange = async (slots) => {
     const hasNewFiles = slots.some(s => s.type === "file");
     if (!hasNewFiles) {
-      const urls = slots.filter(s => s.type === "url").map(s => s.value);
-      upd("photos", urls);
+      set("photos", slots.filter(s => s.type === "url").map(s => s.value));
       return;
     }
     const urls = await uploadPhotos(item.id, slots);
-    upd("photos", urls);
+    set("photos", urls);
   };
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <div>
         <SectionLabel>사진 (최대 4장)</SectionLabel>
-        <PhotoUploader initialUrls={item.photos||[]} onChange={handlePhotoChange} itemId={item.id} />
+        <PhotoUploader initialUrls={draft.photos||[]} onChange={handlePhotoChange} itemId={item.id} />
       </div>
       <Card>
         <SectionLabel>분류</SectionLabel>
         <Row label="카테고리">
-          <select value={item.category} onChange={e => upd("category",e.target.value)} style={{...selStyle,width:"auto"}}>
+          <select value={draft.category} onChange={e => set("category",e.target.value)} style={{...selStyle,width:"auto"}}>
             {categories.map(c => <option key={c}>{c}</option>)}
           </select>
         </Row>
         <Row label="상태">
           <div style={{ display:"flex", gap:5 }}>
             {STATUS_OPTIONS.map(s => (
-              <button key={s} onClick={() => upd("status",s)} style={{ padding:"4px 8px", borderRadius:20, border:"1.5px solid", borderColor:item.status===s?statusColor(s):"#e2ddd7", background:item.status===s?statusColor(s)+"18":"#fff", color:item.status===s?statusColor(s):"#999", fontSize:11, fontWeight:700, cursor:"pointer" }}>{s}</button>
+              <button key={s} onClick={() => set("status",s)} style={{ padding:"4px 8px", borderRadius:20, border:"1.5px solid", borderColor:draft.status===s?statusColor(s):"#e2ddd7", background:draft.status===s?statusColor(s)+"18":"#fff", color:draft.status===s?statusColor(s):"#999", fontSize:11, fontWeight:700, cursor:"pointer" }}>{s}</button>
             ))}
           </div>
         </Row>
         <Row label="위치">
-          <select value={item.location} onChange={e => upd("location",e.target.value)} style={{...selStyle,width:"auto"}}>
+          <select value={draft.location} onChange={e => set("location",e.target.value)} style={{...selStyle,width:"auto"}}>
             {locations.map(l => <option key={l}>{l}</option>)}
           </select>
         </Row>
-        <Row label="보관중"><Toggle value={item.stored} onChange={v => upd("stored",v)} /></Row>
+        <Row label="보관 상태">
+          <div style={{ display:"flex", gap:5 }}>
+            {STORED_OPTIONS.map(s => (
+              <button key={s} onClick={() => set("stored",s)} style={{ padding:"4px 8px", borderRadius:20, border:"1.5px solid", borderColor:storedVal(draft.stored)===s?storedColor(s):"#e2ddd7", background:storedVal(draft.stored)===s?storedColor(s)+"18":"#fff", color:storedVal(draft.stored)===s?storedColor(s):"#999", fontSize:11, fontWeight:700, cursor:"pointer" }}>{s}</button>
+            ))}
+          </div>
+        </Row>
       </Card>
       <Card>
         <SectionLabel>가격 정보</SectionLabel>
         <Row label="통화">
-          <select value={cur} onChange={e => upd("currency",e.target.value)} style={{...selStyle,width:"auto"}}>
+          <select value={cur} onChange={e => set("currency",e.target.value)} style={{...selStyle,width:"auto"}}>
             {Object.entries(CURRENCIES).map(([k,v]) => <option key={k} value={k}>{v.symbol} {v.code} ({v.label})</option>)}
           </select>
         </Row>
         <Row label="희망가격">
           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
             <span style={{ fontSize:13, color:"#888", fontWeight:700 }}>{CURRENCIES[cur]?.symbol}</span>
-            <input defaultValue={item.price} onBlur={e => upd("price",Number(e.target.value))} style={{...iStyle,width:120,textAlign:"right"}} type="number" />
+            <input value={draft.price} onChange={e => set("price", e.target.value)} onBlur={e => set("price", Number(e.target.value))} style={{...iStyle,width:120,textAlign:"right"}} type="number" />
           </div>
         </Row>
         <Row label="시장가 메모">
-          <input defaultValue={item.marketMemo} onBlur={e => upd("marketMemo",e.target.value)} style={{...iStyle,width:160}} placeholder="시세 참고..." />
+          <input value={draft.marketMemo||""} onChange={e => set("marketMemo",e.target.value)} style={{...iStyle,width:160}} placeholder="시세 참고..." />
         </Row>
       </Card>
       <Card>
         <SectionLabel>제품 정보</SectionLabel>
-        <Row label="브랜드" value={item.brand||"—"} />
-        <Row label="구매연도" value={item.year?item.year+"년":"—"} />
-        <Row label="크기" value={item.dimensions||"—"} />
-        <Row label="무게" value={item.weight||"—"} />
+        <Row label="브랜드"><input value={draft.brand||""} onChange={e => set("brand",e.target.value)} style={{...iStyle,width:160}} placeholder="브랜드명..." /></Row>
+        <Row label="구매연도"><input value={draft.year||""} onChange={e => set("year",e.target.value)} style={{...iStyle,width:100}} type="number" placeholder="연도..." /></Row>
+        <Row label="크기"><input value={draft.dimensions||""} onChange={e => set("dimensions",e.target.value)} style={{...iStyle,width:160}} placeholder="예) 120×80cm" /></Row>
+        <Row label="무게"><input value={draft.weight||""} onChange={e => set("weight",e.target.value)} style={{...iStyle,width:120}} placeholder="예) 5kg" /></Row>
         <Row label="상태 메모">
-          <input defaultValue={item.condition} onBlur={e => upd("condition",e.target.value)} style={{...iStyle,width:160}} placeholder="특이사항..." />
+          <input value={draft.condition||""} onChange={e => set("condition",e.target.value)} style={{...iStyle,width:160}} placeholder="특이사항..." />
         </Row>
       </Card>
       <Card>
         <SectionLabel>판매 우선순위</SectionLabel>
         <div style={{ display:"flex", gap:8 }}>
           {PRIORITY_OPTIONS.map(p => (
-            <button key={p} onClick={() => upd("sellPriority",p)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:item.sellPriority===p?priorityColor(p):"#e2ddd7", background:item.sellPriority===p?priorityColor(p)+"15":"#fff", color:item.sellPriority===p?priorityColor(p):"#bbb", fontSize:13, fontWeight:700, cursor:"pointer" }}>{p}</button>
+            <button key={p} onClick={() => set("sellPriority",p)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:draft.sellPriority===p?priorityColor(p):"#e2ddd7", background:draft.sellPriority===p?priorityColor(p)+"15":"#fff", color:draft.sellPriority===p?priorityColor(p):"#bbb", fontSize:13, fontWeight:700, cursor:"pointer" }}>{p}</button>
           ))}
         </div>
       </Card>
       <Card>
         <SectionLabel>메모</SectionLabel>
-        <textarea defaultValue={item.memo} onBlur={e => upd("memo",e.target.value)} style={{...iStyle,height:72,resize:"none"}} placeholder="기타 참고사항..." />
+        <textarea value={draft.memo||""} onChange={e => set("memo",e.target.value)} style={{...iStyle,height:72,resize:"none"}} placeholder="기타 참고사항..." />
       </Card>
+      <button onClick={() => onSave({...draft, price:Number(draft.price)||0, year:Number(draft.year)||0})} style={{ width:"100%", padding:"14px", background:"#c0392b", color:"#fff", border:"none", borderRadius:14, fontSize:15, fontWeight:800, cursor:"pointer" }}>저장</button>
+      <div style={{ paddingTop:8, borderTop:"1px solid #f0ece6" }}>
+        {!confirmDelete ? (
+          <button onClick={() => setConfirmDelete(true)} style={{ width:"100%", padding:"13px", border:"1.5px solid #fca5a5", borderRadius:14, background:"#fff", color:"#ef4444", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4h6v2"/></svg>
+            이 물품 삭제
+          </button>
+        ) : (
+          <div style={{ background:"#fff5f5", border:"1.5px solid #fca5a5", borderRadius:14, padding:"16px" }}>
+            <div style={{ fontSize:14, fontWeight:700, color:"#1a1a1a", marginBottom:4 }}>정말 삭제하시겠어요?</div>
+            <div style={{ fontSize:12, color:"#888", marginBottom:14 }}><span style={{ fontWeight:700, color:"#ef4444" }}>"{item.title}"</span> 물품과 관련된 모든 정보가 영구 삭제됩니다.</div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setConfirmDelete(false)} style={{ flex:1, padding:"11px", border:"1.5px solid #e2ddd7", borderRadius:10, background:"#fff", color:"#666", fontSize:13, fontWeight:700, cursor:"pointer" }}>취소</button>
+              <button onClick={() => { onDelete(item.id); onBack(); }} style={{ flex:1, padding:"11px", border:"none", borderRadius:10, background:"#ef4444", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>삭제 확인</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -608,6 +630,8 @@ function InfoTab({ item, upd, categories, locations, currency }) {
 function LeadsTab({ item, upd, currency }) {
   const [showAdd, setShowAdd] = useState(false);
   const [nl, setNl] = useState({ name:"", contact:"", priority:"보통", offer:"", note:"" });
+  const [editId, setEditId] = useState(null);
+  const [editData, setEditData] = useState(null);
   const addLead = () => {
     if (!nl.name.trim()) return;
     upd("leads", [...(item.leads||[]), {...nl, id:Date.now(), offer:Number(nl.offer)}]);
@@ -615,6 +639,10 @@ function LeadsTab({ item, upd, currency }) {
     setShowAdd(false);
   };
   const delLead = id => upd("leads", (item.leads||[]).filter(l => l.id !== id));
+  const saveLead = () => {
+    upd("leads", (item.leads||[]).map(l => l.id===editId ? {...editData, offer:Number(editData.offer)||0} : l));
+    setEditId(null); setEditData(null);
+  };
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -645,28 +673,51 @@ function LeadsTab({ item, upd, currency }) {
         </div>
       )}
       {(item.leads||[]).map(lead => (
-        <Card key={lead.id}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-            <div style={{ flex:1 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5 }}>
-                <span style={{ fontSize:15, fontWeight:700, color:"#1a1a1a" }}>{lead.name}</span>
-                <Tag color={priorityColor(lead.priority)} label={lead.priority} />
+        editId === lead.id ? (
+          <Card key={lead.id}>
+            <SectionLabel>관심자 수정</SectionLabel>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              <input value={editData.name} onChange={e => setEditData(d => ({...d,name:e.target.value}))} style={iStyle} placeholder="이름 *" />
+              <input value={editData.contact} onChange={e => setEditData(d => ({...d,contact:e.target.value}))} style={iStyle} placeholder="연락처 (전화 / 카카오 / SNS)" />
+              <input value={editData.offer} onChange={e => setEditData(d => ({...d,offer:e.target.value}))} style={iStyle} placeholder={`제안가 (${CURRENCIES[currency]?.symbol||""})`} type="number" />
+              <div style={{ display:"flex", gap:6 }}>
+                {PRIORITY_OPTIONS.map(p => (
+                  <button key={p} onClick={() => setEditData(d => ({...d,priority:p}))} style={{ flex:1, padding:"7px 0", borderRadius:10, border:"1.5px solid", borderColor:editData.priority===p?priorityColor(p):"#e2ddd7", background:editData.priority===p?priorityColor(p)+"15":"#fff", color:editData.priority===p?priorityColor(p):"#bbb", fontSize:12, fontWeight:700, cursor:"pointer" }}>{p}</button>
+                ))}
               </div>
-              {lead.contact && <div style={{ fontSize:12, color:"#777", marginBottom:4 }}>📞 {lead.contact}</div>}
-              {lead.offer>0 && <div style={{ fontSize:13, fontWeight:700, color:"#c0392b" }}>제안가: {formatPrice(lead.offer,currency)}</div>}
-              {lead.note && <div style={{ fontSize:12, color:"#999", marginTop:4 }}>💬 {lead.note}</div>}
+              <input value={editData.note} onChange={e => setEditData(d => ({...d,note:e.target.value}))} style={iStyle} placeholder="메모" />
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => setEditId(null)} style={{ flex:1, padding:"10px", border:"1.5px solid #e2ddd7", borderRadius:10, background:"#fff", color:"#666", fontSize:13, fontWeight:700, cursor:"pointer" }}>취소</button>
+                <button onClick={saveLead} style={{ flex:1, padding:"10px", background:"#c0392b", color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:700, cursor:"pointer" }}>저장</button>
+              </div>
             </div>
-            <button onClick={() => delLead(lead.id)} style={{ border:"none", background:"none", cursor:"pointer", color:"#ddd", padding:4 }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4h6v2"/></svg>
-            </button>
-          </div>
-        </Card>
+          </Card>
+        ) : (
+          <Card key={lead.id} style={{ cursor:"pointer" }} onClick={() => { setEditId(lead.id); setEditData({...lead, offer:lead.offer||""}); }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div style={{ flex:1 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5 }}>
+                  <span style={{ fontSize:15, fontWeight:700, color:"#1a1a1a" }}>{lead.name}</span>
+                  <Tag color={priorityColor(lead.priority)} label={lead.priority} />
+                </div>
+                {lead.contact && <div style={{ fontSize:12, color:"#777", marginBottom:4 }}>📞 {lead.contact}</div>}
+                {lead.offer>0 && <div style={{ fontSize:13, fontWeight:700, color:"#c0392b" }}>제안가: {formatPrice(lead.offer,currency)}</div>}
+                {lead.note && <div style={{ fontSize:12, color:"#999", marginTop:4 }}>💬 {lead.note}</div>}
+              </div>
+              <button onClick={e => { e.stopPropagation(); delLead(lead.id); }} style={{ border:"none", background:"none", cursor:"pointer", color:"#ddd", padding:4 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6l-1,14H6L5,6"/><path d="M10,11v6"/><path d="M14,11v6"/><path d="M9,6V4h6v2"/></svg>
+              </button>
+            </div>
+          </Card>
+        )
       ))}
     </div>
   );
 }
 
-function SellingTab({ item, upd, updCl }) {
+function SellingTab({ item, upd, updCl, currency }) {
+  const [copied, setCopied] = useState(false);
+  const [lang, setLang] = useState("ko");
   const cl = item.checklist || {};
   const checks = [
     { key:"upload",    label:"중고장터 업로드" },
@@ -676,6 +727,39 @@ function SellingTab({ item, upd, updCl }) {
   ];
   const doneCount = checks.filter(c => cl[c.key]).length;
   const pct = Math.round(doneCount / checks.length * 100);
+
+  const cur = CURRENCIES[item.currency||currency] || CURRENCIES.KRW;
+  const priceStr = `${cur.symbol}${Number(item.price).toLocaleString(cur.locale)}`;
+  const statusKo = { "새것":"새상품 (미사용)","양호":"양호","수리필요":"수리 필요" }[item.status]||item.status;
+  const statusEn = { "새것":"Brand new (unused)","양호":"Good condition","수리필요":"Needs repair" }[item.status]||item.status;
+  const hasVal = v => v && v !== "—" && v !== 0 && v !== "";
+  const koLines = [
+    `📦 ${item.title}`, ``,
+    hasVal(item.brand)      ? `▪ 브랜드: ${item.brand}` : null,
+    hasVal(item.year)       ? `▪ 구매연도: ${item.year}년` : null,
+    hasVal(item.dimensions) ? `▪ 크기: ${item.dimensions}` : null,
+    hasVal(item.weight)     ? `▪ 무게: ${item.weight}` : null,
+    `▪ 상태: ${statusKo}`,
+    hasVal(item.condition)  ? `▪ 상태 메모: ${item.condition}` : null,
+    ``, `💰 희망가: ${priceStr}`
+  ].filter(l => l !== null).join("\n");
+  const enLines = [
+    `📦 ${item.title}`, ``,
+    hasVal(item.brand)      ? `▪ Brand: ${item.brand}` : null,
+    hasVal(item.year)       ? `▪ Year purchased: ${item.year}` : null,
+    hasVal(item.dimensions) ? `▪ Size: ${item.dimensions}` : null,
+    hasVal(item.weight)     ? `▪ Weight: ${item.weight}` : null,
+    `▪ Condition: ${statusEn}`,
+    hasVal(item.condition)  ? `▪ Notes: ${item.condition}` : null,
+    ``, `💰 Asking price: ${priceStr}`
+  ].filter(l => l !== null).join("\n");
+  const lines = lang==="ko" ? koLines : enLines;
+  const handleCopy = () => {
+    const done = () => { setCopied(true); setTimeout(()=>setCopied(false),2000); };
+    if (navigator.clipboard) { navigator.clipboard.writeText(lines).then(done); }
+    else { const ta=document.createElement("textarea"); ta.value=lines; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); }
+  };
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
       <Card>
@@ -693,35 +777,6 @@ function SellingTab({ item, upd, updCl }) {
         </div>
       </Card>
       <Card>
-        <SectionLabel>판매 우선순위</SectionLabel>
-        <div style={{ display:"flex", gap:8 }}>
-          {PRIORITY_OPTIONS.map(p => (
-            <button key={p} onClick={() => upd("sellPriority",p)} style={{ flex:1, padding:"9px 0", borderRadius:10, border:"1.5px solid", borderColor:item.sellPriority===p?priorityColor(p):"#e2ddd7", background:item.sellPriority===p?priorityColor(p)+"15":"#fff", color:item.sellPriority===p?priorityColor(p):"#bbb", fontSize:13, fontWeight:700, cursor:"pointer" }}>{p}</button>
-          ))}
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function CopyTab({ item, currency }) {
-  const [copied, setCopied] = useState(false);
-  const [lang, setLang] = useState("ko");
-  const cur = CURRENCIES[currency] || CURRENCIES.KRW;
-  const priceStr = `${cur.symbol}${Number(item.price).toLocaleString(cur.locale)}`;
-  const statusKo = { "새것":"새상품 (미사용)","양호":"양호","수리필요":"수리 필요" }[item.status]||item.status;
-  const statusEn = { "새것":"Brand new (unused)","양호":"Good condition","수리필요":"Needs repair" }[item.status]||item.status;
-  const koLines = [`📦 ${item.title}`,``,item.brand?`▪ 브랜드: ${item.brand}`:null,item.year?`▪ 구매연도: ${item.year}년`:null,item.dimensions&&item.dimensions!=="—"?`▪ 크기: ${item.dimensions}`:null,item.weight&&item.weight!=="—"?`▪ 무게: ${item.weight}`:null,`▪ 상태: ${statusKo}`,item.condition?`▪ 상태 메모: ${item.condition}`:null,``,`💰 희망가: ${priceStr}`].filter(l=>l!==null).join("\n");
-  const enLines = [`📦 ${item.title}`,``,item.brand?`▪ Brand: ${item.brand}`:null,item.year?`▪ Year purchased: ${item.year}`:null,item.dimensions&&item.dimensions!=="—"?`▪ Size: ${item.dimensions}`:null,item.weight&&item.weight!=="—"?`▪ Weight: ${item.weight}`:null,`▪ Condition: ${statusEn}`,item.condition?`▪ Notes: ${item.condition}`:null,``,`💰 Asking price: ${priceStr}`].filter(l=>l!==null).join("\n");
-  const lines = lang==="ko" ? koLines : enLines;
-  const handleCopy = () => {
-    const done = () => { setCopied(true); setTimeout(()=>setCopied(false),2000); };
-    if (navigator.clipboard) { navigator.clipboard.writeText(lines).then(done); }
-    else { const ta=document.createElement("textarea"); ta.value=lines; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); }
-  };
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-      <Card>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
           <SectionLabel>판매 문구</SectionLabel>
           <div style={{ display:"flex", gap:0, border:"1.5px solid #e2ddd7", borderRadius:10, overflow:"hidden" }}>
@@ -737,7 +792,7 @@ function CopyTab({ item, currency }) {
             : <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>클립보드에 복사</>}
         </button>
       </Card>
-      <div style={{ fontSize:11, color:"#bbb", textAlign:"center", lineHeight:1.7 }}>카카오톡, 당근마켓, Facebook Marketplace 등<br/>메신저에 그대로 붙여넣기 하세요.</div>
+      <div style={{ fontSize:11, color:"#bbb", textAlign:"center", lineHeight:1.7 }}>카카오톡, WhatsApp 등<br/>메신저에 그대로 붙여넣기 하세요.</div>
     </div>
   );
 }
@@ -826,7 +881,7 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
     title:"", category:categories[0]||"기타", status:"양호",
     location:locations[0]||"거실", price:"", currency,
     marketMemo:"", condition:"", brand:"", year:"",
-    dimensions:"", weight:"", memo:"", sellPriority:"보통", stored:true
+    dimensions:"", weight:"", memo:"", sellPriority:"보통", stored:"보관중"
   });
   const [photoSlots, setPhotoSlots] = useState([
     {type:"empty",value:null,preview:null},{type:"empty",value:null,preview:null},
@@ -984,7 +1039,6 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
               ))}
             </div>
           </Row>
-          <Row label="보관중"><Toggle value={form.stored} onChange={v => set("stored",v)} /></Row>
         </Card>
         <Card>
           <label style={lStyle}>메모</label>

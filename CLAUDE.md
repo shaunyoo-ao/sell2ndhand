@@ -1,5 +1,10 @@
 # Sell2ndHand — 개발 가이드
 
+## 응답 생성 지침
+- 응답은 최소 토큰으로 간결하게 유지한다
+- 대규모 코드 변경은 섹션별로 분할하여 스트림 타임아웃을 방지한다
+- 각 Edit 호출은 독립적으로 완결되어야 하며, 불필요한 설명 없이 핵심만 전달한다
+
 ## 앱 개요
 중고물품 판매 관리 모바일 웹앱. Firebase Spark 플랜(Hosting + Firestore + Storage) 위에서
 React CDN + Babel 방식으로 동작하며 **빌드 단계 없음(no npm, no build step)**.

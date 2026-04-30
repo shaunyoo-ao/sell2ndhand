@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAllowed() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'shaun.yoo.ao@gmail.com',
+          'lee.yeonvely@icloud.com'
+        ];
+    }
+
+    match /items/{itemId} {
+      allow read, write: if isAllowed();
+    }
+
+    match /settings/{docId} {
+      allow read, write: if isAllowed();
+    }
+  }
+}

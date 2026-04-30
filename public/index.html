@@ -165,10 +165,24 @@ async function uploadPhotos(itemId, slots) {
     if (slot.type !== "file")  { continue; }
     const blob = await resizeImageToBlob(slot.value);
     const ref  = storage.ref(`items/${itemId}/photo_${i}_${Date.now()}.jpg`);
-    const snap = await ref.put(blob, { contentType: "image/jpeg" });
-    results.push(await snap.ref.getDownloadURL());
+    results.push(await uploadBlobToStorage(ref, blob));
   }
   return results;
+}
+
+function uploadBlobToStorage(ref, blob, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const task = ref.put(blob, { contentType: "image/jpeg" });
+    const timer = setTimeout(() => {
+      task.cancel();
+      reject(new Error("업로드 시간 초과 — 네트워크를 확인하세요"));
+    }, timeoutMs);
+    task.on("state_changed",
+      null,
+      (err) => { clearTimeout(timer); reject(err); },
+      () => { clearTimeout(timer); task.snapshot.ref.getDownloadURL().then(resolve, reject); }
+    );
+  });
 }
 
 // ─── 공통 스타일 상수 ─────────────────────────────────────────────
@@ -478,7 +492,7 @@ function DetailScreen({ item, onBack, onUpdate, onDelete, categories, locations,
 
   const upd = (field, val) => { const u = {...li, [field]:val}; setLi(u); onUpdate(u); };
   const updCl = (field, val) => { const u = {...li, checklist:{...li.checklist, [field]:val}}; setLi(u); onUpdate(u); };
-  const saveInfoTab = (draft) => { setLi(draft); onUpdate(draft); };
+  const saveInfoTab = async (draft) => { setLi(draft); await onUpdate(draft); };
 
   const TABS = [
     { id:"info",    label:"기본정보" },
@@ -544,9 +558,8 @@ function InfoTab({ item, onSave, onDelete, onBack, categories, locations, curren
             bump(Math.round(10 + (done/n)*30), `사진 압축 중... (${done+1}/${n})`);
             const blob = await resizeImageToBlob(slot.value);
             bump(Math.round(40 + (done/n)*35), `사진 업로드 중... (${done+1}/${n})`);
-            const ref  = storage.ref(`items/${item.id}/photo_${i}_${Date.now()}.jpg`);
-            const snap = await withTimeout(ref.put(blob, { contentType:"image/jpeg" }), 45000);
-            urls.push(await snap.ref.getDownloadURL());
+            const ref = storage.ref(`items/${item.id}/photo_${i}_${Date.now()}.jpg`);
+            urls.push(await uploadBlobToStorage(ref, blob));
             done++;
           }
           photos = urls;
@@ -558,6 +571,7 @@ function InfoTab({ item, onSave, onDelete, onBack, categories, locations, curren
       const hasFiles2 = pendingSlots ? pendingSlots.some(s => s.type==="file") : false;
       bump(hasFiles2 ? 80 : 50, "정보 저장 중...");
       await onSave({...draft, photos, price:Number(draft.price)||0, year:Number(draft.year)||0});
+      setDraft(d => ({...d, photos}));
       bump(100, "저장 완료! ✅");
       setTimeout(() => { setSaving(false); setProgress({pct:0,label:""}); setPending(null); }, 700);
     } catch(e) {
@@ -1041,15 +1055,14 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
           bump(Math.round(10 + (done / n) * 30), `사진 압축 중... (${done+1}/${n})`);
           const blob = await resizeImageToBlob(slot.value);
           bump(Math.round(40 + (done / n) * 35), `사진 업로드 중... (${done+1}/${n})`);
-          const ref  = storage.ref(`items/${newRef.id}/photo_${i}_${Date.now()}.jpg`);
-          const snap = await withTimeout(ref.put(blob, { contentType:"image/jpeg" }), 45000);
-          photoUrls.push(await snap.ref.getDownloadURL());
+          const ref = storage.ref(`items/${newRef.id}/photo_${i}_${Date.now()}.jpg`);
+          photoUrls.push(await uploadBlobToStorage(ref, blob));
           done++;
         }
       }
 
       bump(fileSlots.length > 0 ? 80 : 50, "정보 저장 중...");
-      await withTimeout(newRef.set({
+      await newRef.set({
         ...form,
         price:  Number(form.price) || 0,
         year:   Number(form.year)  || new Date().getFullYear(),
@@ -1058,7 +1071,7 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
         checklist: { upload:false, contact:false, negotiate:false, prepare:false },
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      }), 15000);
+      });
 
       setProgress({ pct: 100, label: "등록 완료! ✅" });
       setTimeout(onAdd, 700);

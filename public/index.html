@@ -1026,7 +1026,7 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
           </div>
         ) : (
           <button onClick={submit} style={{ background:form.title.trim()?"#c0392b":"#ddd", color:"#fff", border:"none", borderRadius:14, padding:"15px", fontSize:15, fontWeight:800, cursor:form.title.trim()?"pointer":"default", transition:"background 0.2s", letterSpacing:-0.2 }}>
-            등록 완료
+            등록
           </button>
         )}
       </div>
@@ -1165,6 +1165,9 @@ function Root() {
   const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
+    auth.getRedirectResult().catch(e => {
+      setAuthError("로그인 실패: " + e.code);
+    });
     return auth.onAuthStateChanged(u => {
       if (u && !ALLOWED_EMAILS.includes(u.email)) {
         auth.signOut();
@@ -1180,17 +1183,15 @@ function Root() {
   const handleGoogleLogin = () => {
     setAuthError(null);
     setAuthLoading(true);
-    auth.signInWithPopup(googleProvider)
-      .catch(e => setAuthError("로그인 실패: " + e.code))
-      .finally(() => setAuthLoading(false));
+    auth.signInWithRedirect(googleProvider)
+      .catch(e => { setAuthError("로그인 실패: " + e.code); setAuthLoading(false); });
   };
 
   const handleAppleLogin = () => {
     setAuthError(null);
     setAuthLoading(true);
-    auth.signInWithPopup(appleProvider)
-      .catch(e => setAuthError("로그인 실패: " + e.code))
-      .finally(() => setAuthLoading(false));
+    auth.signInWithRedirect(appleProvider)
+      .catch(e => { setAuthError("로그인 실패: " + e.code); setAuthLoading(false); });
   };
 
   if (user === undefined) {

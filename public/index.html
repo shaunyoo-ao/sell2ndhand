@@ -1330,7 +1330,7 @@ function App({ user }) {
       {!selected && tab !== "add" && (
         <div style={{ textAlign:"center", padding:"10px 16px 14px", borderTop:"1px solid #ede8e1", background:"#faf8f5" }}>
           <div style={{ fontSize:10, color:"#ccc", fontWeight:500, lineHeight:1.8 }}>
-            Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>Version 1.0.4
+            Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>Version 1.0.5
           </div>
         </div>
       )}
@@ -1348,9 +1348,6 @@ function Root() {
   const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
-    auth.getRedirectResult().catch(e => {
-      setAuthError("로그인 실패: " + e.code);
-    });
     return auth.onAuthStateChanged(u => {
       if (u && !ALLOWED_EMAILS.includes(u.email)) {
         auth.signOut();
@@ -1366,7 +1363,7 @@ function Root() {
   const handleGoogleLogin = () => {
     setAuthError(null);
     setAuthLoading(true);
-    auth.signInWithRedirect(googleProvider)
+    auth.signInWithPopup(googleProvider)
       .catch(e => { setAuthError("로그인 실패: " + e.code); setAuthLoading(false); });
   };
 

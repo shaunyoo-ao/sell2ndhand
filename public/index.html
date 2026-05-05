@@ -329,8 +329,7 @@ function LoginScreen({ onGoogleLogin, error, loading }) {
       </div>
 
       <p style={{ fontSize:10, color:"#ccc", marginTop:28, textAlign:"center", lineHeight:1.9 }}>
-        Group A&nbsp;&nbsp;shaun.yoo.ao · 2yeonsoo<br/>
-        Group B&nbsp;&nbsp;minkyungbaek · ssineroo<br/>
+        Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>
         Version 1.0.6
       </p>
     </div>
@@ -1335,9 +1334,7 @@ function App({ user, collPrefix }) {
       {!selected && tab !== "add" && (
         <div style={{ textAlign:"center", padding:"10px 16px 14px", borderTop:"1px solid #ede8e1", background:"#faf8f5" }}>
           <div style={{ fontSize:10, color:"#ccc", fontWeight:500, lineHeight:1.8 }}>
-            Group A&nbsp;&nbsp;shaun.yoo.ao · 2yeonsoo<br/>
-            Group B&nbsp;&nbsp;minkyungbaek · ssineroo<br/>
-            Version 1.0.6
+            {GROUP_B.includes(user.email) ? "Group B" : "Group A"}&nbsp;&nbsp;Version 1.0.6
           </div>
         </div>
       )}

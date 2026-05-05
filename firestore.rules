@@ -2,21 +2,25 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isAllowed() {
+    function isGroupA() {
       return request.auth != null &&
         request.auth.token.email in [
           'shaun.yoo.ao@gmail.com',
-          'lee.yeonvely@icloud.com',
           '2yeonsoo@gmail.com'
         ];
     }
 
-    match /items/{itemId} {
-      allow read, write: if isAllowed();
+    function isGroupB() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'minkyungbaek@gmail.com',
+          'ssineroo@gmail.com'
+        ];
     }
 
-    match /settings/{docId} {
-      allow read, write: if isAllowed();
-    }
+    match /items/{itemId}     { allow read, write: if isGroupA(); }
+    match /settings/{docId}   { allow read, write: if isGroupA(); }
+    match /b_items/{itemId}   { allow read, write: if isGroupB(); }
+    match /b_settings/{docId} { allow read, write: if isGroupB(); }
   }
 }

@@ -60,7 +60,10 @@
 const { useState, useEffect, useRef } = React;
 
 // ─── 인증 허용 계정 ───────────────────────────────────────────────
-const ALLOWED_EMAILS = ["shaun.yoo.ao@gmail.com", "lee.yeonvely@icloud.com", "2yeonsoo@gmail.com"];
+const GROUP_A = ["shaun.yoo.ao@gmail.com", "2yeonsoo@gmail.com"];
+const GROUP_B = ["minkyungbaek@gmail.com", "ssineroo@gmail.com"];
+const ALLOWED_EMAILS = [...GROUP_A, ...GROUP_B];
+function getCollPrefix(email) { return GROUP_B.includes(email) ? "b_" : ""; }
 const IMGBB_API_KEY  = "aa2e3a52e107b195ea1b0789ec6229f9";
 
 // ─── 통화 설정 ────────────────────────────────────────────────────
@@ -325,8 +328,10 @@ function LoginScreen({ onGoogleLogin, error, loading }) {
         </button>
       </div>
 
-      <p style={{ fontSize:11, color:"#ccc", marginTop:28, textAlign:"center", lineHeight:1.7 }}>
-        Copyright © 2026, shaun.yoo.ao All rights reserved.
+      <p style={{ fontSize:10, color:"#ccc", marginTop:28, textAlign:"center", lineHeight:1.9 }}>
+        Group A&nbsp;&nbsp;shaun.yoo.ao · 2yeonsoo<br/>
+        Group B&nbsp;&nbsp;minkyungbaek · ssineroo<br/>
+        Version 1.0.6
       </p>
     </div>
   );
@@ -1006,7 +1011,7 @@ function ChecklistScreen({ items, currency }) {
 }
 
 // ─── 등록 화면 ────────────────────────────────────────────────────
-function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCategory, onAddLocation }) {
+function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCategory, onAddLocation, collPrefix }) {
   const [form, setForm] = useState({
     title:"", category:categories[0]||"기타", status:"양호",
     location:locations[0]||"거실", price:"", currency,
@@ -1033,7 +1038,7 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
     const bump = (pct, label) => { step++; setProgress({ pct, label }); };
 
     try {
-      const newRef    = db.collection("items").doc();
+      const newRef    = db.collection(collPrefix + "items").doc();
       let photoUrls   = [];
 
       if (fileSlots.length > 0) {
@@ -1220,7 +1225,7 @@ function AddScreen({ onAdd, onBack, categories, locations, currency, onAddCatego
 }
 
 // ─── 메인 앱 ──────────────────────────────────────────────────────
-function App({ user }) {
+function App({ user, collPrefix }) {
   const [items, setItems]           = useState([]);
   const [tab, setTab]               = useState("list");
   const [selected, setSelected]     = useState(null);
@@ -1235,12 +1240,12 @@ function App({ user }) {
   const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 2200); };
 
   useEffect(() => {
-    const unsubItems = db.collection("items").orderBy("createdAt","desc")
+    const unsubItems = db.collection(collPrefix + "items").orderBy("createdAt","desc")
       .onSnapshot(snap => {
         setItems(snap.docs.map(d => ({ id:d.id, ...d.data() })));
         setLoading(false);
       }, () => setLoading(false));
-    const unsubSettings = db.collection("settings").doc("config")
+    const unsubSettings = db.collection(collPrefix + "settings").doc("config")
       .onSnapshot(snap => {
         if (snap.exists) {
           const d = snap.data();
@@ -1262,7 +1267,7 @@ function App({ user }) {
   const updateItem = async (updated) => {
     setSelected(updated);
     const { id, ...data } = updated;
-    await db.collection("items").doc(id).update({
+    await db.collection(collPrefix + "items").doc(id).update({
       ...data,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     });
@@ -1279,16 +1284,16 @@ function App({ user }) {
       const fbUrls = item.photos.filter(url => url.includes("firebasestorage.googleapis.com"));
       if (fbUrls.length) await Promise.all(fbUrls.map(url => storage.refFromURL(url).delete().catch(()=>{})));
     }
-    await db.collection("items").doc(id).delete();
+    await db.collection(collPrefix + "items").doc(id).delete();
   };
 
   const addCategory = (name) => {
-    db.collection("settings").doc("config").set(
+    db.collection(collPrefix + "settings").doc("config").set(
       { categories: firebase.firestore.FieldValue.arrayUnion(name) }, { merge:true }
     );
   };
   const addLocation = (name) => {
-    db.collection("settings").doc("config").set(
+    db.collection(collPrefix + "settings").doc("config").set(
       { locations: firebase.firestore.FieldValue.arrayUnion(name) }, { merge:true }
     );
   };
@@ -1306,7 +1311,7 @@ function App({ user }) {
   } else if (selected) {
     screen = <DetailScreen item={selected} onBack={() => setSelected(null)} onUpdate={updateItem} onDelete={deleteItem} categories={categories} locations={locations} currency={currency} />;
   } else if (tab === "add") {
-    screen = <AddScreen onAdd={addItem} onBack={() => setTab("list")} categories={categories} locations={locations} currency={currency} onAddCategory={addCategory} onAddLocation={addLocation} />;
+    screen = <AddScreen onAdd={addItem} onBack={() => setTab("list")} categories={categories} locations={locations} currency={currency} onAddCategory={addCategory} onAddLocation={addLocation} collPrefix={collPrefix} />;
   } else if (tab === "checklist") {
     screen = <ChecklistScreen items={items} currency={currency} />;
   } else {
@@ -1330,7 +1335,9 @@ function App({ user }) {
       {!selected && tab !== "add" && (
         <div style={{ textAlign:"center", padding:"10px 16px 14px", borderTop:"1px solid #ede8e1", background:"#faf8f5" }}>
           <div style={{ fontSize:10, color:"#ccc", fontWeight:500, lineHeight:1.8 }}>
-            Copyright © 2026, shaun.yoo.ao All rights reserved.<br/>Version 1.0.5
+            Group A&nbsp;&nbsp;shaun.yoo.ao · 2yeonsoo<br/>
+            Group B&nbsp;&nbsp;minkyungbaek · ssineroo<br/>
+            Version 1.0.6
           </div>
         </div>
       )}
@@ -1343,8 +1350,9 @@ function App({ user }) {
 
 // ─── 루트 (인증 상태 관리) ────────────────────────────────────────
 function Root() {
-  const [user, setUser]           = useState(undefined);
-  const [authError, setAuthError] = useState(null);
+  const [user, setUser]               = useState(undefined);
+  const [collPrefix, setCollPrefix]   = useState("");
+  const [authError, setAuthError]     = useState(null);
   const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
@@ -1355,7 +1363,10 @@ function Root() {
         setAuthError("접근 권한이 없는 계정입니다.");
       } else {
         setUser(u || null);
-        if (u) setAuthError(null);
+        if (u) {
+          setCollPrefix(getCollPrefix(u.email));
+          setAuthError(null);
+        }
       }
     });
   }, []);
@@ -1378,7 +1389,7 @@ function Root() {
   if (!user) {
     return <LoginScreen onGoogleLogin={handleGoogleLogin} error={authError} loading={authLoading} />;
   }
-  return <App user={user} />;
+  return <App user={user} collPrefix={collPrefix} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);

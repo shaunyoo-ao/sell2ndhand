@@ -5,13 +5,11 @@ service firebase.storage {
       allow read: if request.auth != null &&
         request.auth.token.email in [
           'shaun.yoo.ao@gmail.com',
-          'lee.yeonvely@icloud.com',
           '2yeonsoo@gmail.com'
         ];
       allow write: if request.auth != null &&
         request.auth.token.email in [
           'shaun.yoo.ao@gmail.com',
-          'lee.yeonvely@icloud.com',
           '2yeonsoo@gmail.com'
         ] &&
         request.resource.size < 600 * 1024 &&
@@ -19,8 +17,26 @@ service firebase.storage {
       allow delete: if request.auth != null &&
         request.auth.token.email in [
           'shaun.yoo.ao@gmail.com',
-          'lee.yeonvely@icloud.com',
           '2yeonsoo@gmail.com'
+        ];
+    }
+    match /b_items/{itemId}/{allPaths=**} {
+      allow read: if request.auth != null &&
+        request.auth.token.email in [
+          'minkyungbaek@gmail.com',
+          'ssineroo@gmail.com'
+        ];
+      allow write: if request.auth != null &&
+        request.auth.token.email in [
+          'minkyungbaek@gmail.com',
+          'ssineroo@gmail.com'
+        ] &&
+        request.resource.size < 600 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null &&
+        request.auth.token.email in [
+          'minkyungbaek@gmail.com',
+          'ssineroo@gmail.com'
         ];
     }
   }
